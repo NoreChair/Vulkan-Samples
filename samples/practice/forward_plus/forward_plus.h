@@ -4,16 +4,11 @@
 #pragma once
 
 #include "camera.h"
+#include "platform/platform.h"
 #include "vulkan_sample.h"
 
 class forward_plus : public vkb::VulkanSample
 {
-	struct Texture
-	{
-		std::unique_ptr<vkb::sg::Image> image;
-		VkSampler                       sampler;
-	};
-
 	struct Models
 	{
 		std::unique_ptr<vkb::sg::SubMesh>              skybox;
@@ -34,17 +29,24 @@ class forward_plus : public vkb::VulkanSample
 		glm::mat4 project;
 	};
 
-	struct RenderPipeline
+	struct RenderPassEntry
 	{
-		vkb::Pipeline       pbo;
-		vkb::PipelineLayout layout;
+		std::unique_ptr<vkb::Framebuffer>                 frameBuffer;
+		std::unique_ptr<vkb::RenderPass>                  renderPass;
+		std::vector<std::unique_ptr<vkb::GraphicsPipeline>> pipelines;
 	};
 
-	struct Pass
+	struct MouseButton
 	{
-		vkb::Framebuffer              frameBuffer;
-		vkb::RenderPass               renderPass;
-		std::vector<RenderPipeline *> pipeline;
+		bool left   = false;
+		bool right  = false;
+		bool middle = false;
+	};
+
+	struct TouchPos
+	{
+		int32_t x = 0;
+		int32_t y = 0;
 	};
 
   private:
@@ -59,18 +61,11 @@ class forward_plus : public vkb::VulkanSample
 	void         handle_mouse_move(int32_t x, int32_t y);
 
 	void render(float delta_time);
-	void on_update_ui_overlay(vkb::Drawer &drawer);
-	void create_attachment(VkFormat format, VkImageUsageFlagBits usage, vkb::Framebuffer *framebuffer);
 	void prepare_offscreen_buffer();
 	void load_assets();
-	void setup_descriptor_pool();
-	void setup_descriptor_set_layout();
-	void setup_descriptor_sets();
 	void prepare_pipelines();
 	void prepare_uniform_buffers();
 	void update_uniform_buffers();
-	void update_params();
-	void draw();
 
   private:
 	const std::string title = "Vulkan Example";
@@ -90,20 +85,15 @@ class forward_plus : public vkb::VulkanSample
 	// Use to adjust mouse rotation speed
 	float rotation_speed = 1.0f;
 	// Use to adjust mouse zoom speed
-	float     zoom_speed    = 1.0f;
-	double    touch_timer   = 0.0;
-	int64_t   last_tap_time = 0;
-	glm::vec2 mouse_pos;
+	float       zoom_speed    = 1.0f;
+	double      touch_timer   = 0.0;
+	int64_t     last_tap_time = 0;
+	glm::vec2   mouse_pos     = glm::vec2();
+	MouseButton mouse_buttons;
+	TouchPos    touch_pos;
 
-	struct MouseButton
-	{
-		bool left   = false;
-		bool right  = false;
-		bool middle = false;
-	} mouse_buttons;
-	struct TouchPos
-	{
-		int32_t x;
-		int32_t y;
-	} touch_pos;
+	/*                            Rendering                        */
+	RenderPassEntry depthPass{};
 };
+
+std::unique_ptr<vkb::Application> create_forward_plus();

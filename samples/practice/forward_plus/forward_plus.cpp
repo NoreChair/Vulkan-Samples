@@ -1,14 +1,61 @@
 #include "forward_plus.h"
+using namespace vkb;
+using namespace vkb::core;
 
-forward_plus::forward_plus() 
+forward_plus::forward_plus()
 {
-
+	set_name(name);
 }
 
 forward_plus::~forward_plus()
 {
 }
 
+bool forward_plus::prepare(Platform &platform)
+{
+	if (!VulkanSample::prepare(platform))
+	{
+		return false;
+	}
+
+	Device &refDevice = *device.get();
+
+	// Create Image
+	VkExtent3D extent{platform.get_window().get_width(), platform.get_window().get_height(), 1};
+	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
+
+	// Create Render Target
+	std::vector<Image> images;
+	images.push_back(std::move(depthImage));
+	RenderTarget renderTarget(std::move(images));
+
+	{
+		// Dpeth Pass
+		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+		depthPass.renderPass  = std::make_unique<RenderPass>(refDevice, renderTarget.get_attachments(), loadStoreInfos, subPassInfos);
+		depthPass.frameBuffer = std::make_unique<Framebuffer>(refDevice, renderTarget, *depthPass.renderPass.get());
+
+		// TODO :
+		PipelineLayout layout(refDevice, std::vector<ShaderModule*>());
+		PipelineState depthOnlyPipelineState;
+		depthOnlyPipelineState.set_pipeline_layout(layout);
+		auto pbo = std::make_unique<GraphicsPipeline>(refDevice, VK_NULL_HANDLE, depthOnlyPipelineState);
+		depthPass.pipelines.push_back(pbo);
+	}
+
+	return true;
+}
+
+void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
+{
+}
+
+void forward_plus::resize(const uint32_t width, const uint32_t height)
+{
+}
 
 void forward_plus::input_event(const vkb::InputEvent &input_event)
 {
@@ -33,34 +80,34 @@ void forward_plus::input_event(const vkb::InputEvent &input_event)
 			{
 				switch (mouse_button.get_button())
 				{
-				case vkb::MouseButton::Left:
-					mouse_buttons.left = true;
-					break;
-				case vkb::MouseButton::Right:
-					mouse_buttons.right = true;
-					break;
-				case vkb::MouseButton::Middle:
-					mouse_buttons.middle = true;
-					break;
-				default:
-					break;
+					case vkb::MouseButton::Left:
+						mouse_buttons.left = true;
+						break;
+					case vkb::MouseButton::Right:
+						mouse_buttons.right = true;
+						break;
+					case vkb::MouseButton::Middle:
+						mouse_buttons.middle = true;
+						break;
+					default:
+						break;
 				}
 			}
 			else if (mouse_button.get_action() == vkb::MouseAction::Up)
 			{
 				switch (mouse_button.get_button())
 				{
-				case vkb::MouseButton::Left:
-					mouse_buttons.left = false;
-					break;
-				case vkb::MouseButton::Right:
-					mouse_buttons.right = false;
-					break;
-				case vkb::MouseButton::Middle:
-					mouse_buttons.middle = false;
-					break;
-				default:
-					break;
+					case vkb::MouseButton::Left:
+						mouse_buttons.left = false;
+						break;
+					case vkb::MouseButton::Right:
+						mouse_buttons.right = false;
+						break;
+					case vkb::MouseButton::Middle:
+						mouse_buttons.middle = false;
+						break;
+					default:
+						break;
 				}
 			}
 		}
@@ -70,20 +117,20 @@ void forward_plus::input_event(const vkb::InputEvent &input_event)
 
 			if (touch_event.get_action() == vkb::TouchAction::Down)
 			{
-				touch_down = true;
-				touch_pos.x = static_cast<int32_t>(touch_event.get_pos_x());
-				touch_pos.y = static_cast<int32_t>(touch_event.get_pos_y());
-				mouse_pos.x = touch_event.get_pos_x();
-				mouse_pos.y = touch_event.get_pos_y();
+				touch_down         = true;
+				touch_pos.x        = static_cast<int32_t>(touch_event.get_pos_x());
+				touch_pos.y        = static_cast<int32_t>(touch_event.get_pos_y());
+				mouse_pos.x        = touch_event.get_pos_x();
+				mouse_pos.y        = touch_event.get_pos_y();
 				mouse_buttons.left = true;
 			}
 			else if (touch_event.get_action() == vkb::TouchAction::Up)
 			{
-				touch_pos.x = static_cast<int32_t>(touch_event.get_pos_x());
-				touch_pos.y = static_cast<int32_t>(touch_event.get_pos_y());
-				touch_timer = 0.0;
-				touch_down = false;
-				camera.keys.up = false;
+				touch_pos.x        = static_cast<int32_t>(touch_event.get_pos_x());
+				touch_pos.y        = static_cast<int32_t>(touch_event.get_pos_y());
+				touch_timer        = 0.0;
+				touch_down         = false;
+				camera.keys.up     = false;
 				mouse_buttons.left = false;
 			}
 			else if (touch_event.get_action() == vkb::TouchAction::Move)
@@ -92,15 +139,15 @@ void forward_plus::input_event(const vkb::InputEvent &input_event)
 				if (gui)
 				{
 					ImGuiIO &io = ImGui::GetIO();
-					handled = io.WantCaptureMouse;
+					handled     = io.WantCaptureMouse;
 				}
 				if (!handled)
 				{
 					int32_t eventX = static_cast<int32_t>(touch_event.get_pos_x());
 					int32_t eventY = static_cast<int32_t>(touch_event.get_pos_y());
 
-					float deltaX = (float)(touch_pos.y - eventY) * rotation_speed * 0.5f;
-					float deltaY = (float)(touch_pos.x - eventX) * rotation_speed * 0.5f;
+					float deltaX = (float) (touch_pos.y - eventY) * rotation_speed * 0.5f;
+					float deltaY = (float) (touch_pos.x - eventX) * rotation_speed * 0.5f;
 
 					camera.rotate(glm::vec3(deltaX, 0.0f, 0.0f));
 					camera.rotate(glm::vec3(0.0f, -deltaY, 0.0f));
@@ -121,40 +168,40 @@ void forward_plus::input_event(const vkb::InputEvent &input_event)
 			{
 				switch (key_button.get_code())
 				{
-				case vkb::KeyCode::W:
-					camera.keys.up = true;
-					break;
-				case vkb::KeyCode::S:
-					camera.keys.down = true;
-					break;
-				case vkb::KeyCode::A:
-					camera.keys.left = true;
-					break;
-				case vkb::KeyCode::D:
-					camera.keys.right = true;
-					break;
-				default:
-					break;
+					case vkb::KeyCode::W:
+						camera.keys.up = true;
+						break;
+					case vkb::KeyCode::S:
+						camera.keys.down = true;
+						break;
+					case vkb::KeyCode::A:
+						camera.keys.left = true;
+						break;
+					case vkb::KeyCode::D:
+						camera.keys.right = true;
+						break;
+					default:
+						break;
 				}
 			}
 			else if (key_button.get_action() == vkb::KeyAction::Up)
 			{
 				switch (key_button.get_code())
 				{
-				case vkb::KeyCode::W:
-					camera.keys.up = false;
-					break;
-				case vkb::KeyCode::S:
-					camera.keys.down = false;
-					break;
-				case vkb::KeyCode::A:
-					camera.keys.left = false;
-					break;
-				case vkb::KeyCode::D:
-					camera.keys.right = false;
-					break;
-				default:
-					break;
+					case vkb::KeyCode::W:
+						camera.keys.up = false;
+						break;
+					case vkb::KeyCode::S:
+						camera.keys.down = false;
+						break;
+					case vkb::KeyCode::A:
+						camera.keys.left = false;
+						break;
+					case vkb::KeyCode::D:
+						camera.keys.right = false;
+						break;
+					default:
+						break;
 				}
 			}
 		}
@@ -163,20 +210,20 @@ void forward_plus::input_event(const vkb::InputEvent &input_event)
 
 void forward_plus::handle_mouse_move(int32_t x, int32_t y)
 {
-	int32_t dx = (int32_t)mouse_pos.x - x;
-	int32_t dy = (int32_t)mouse_pos.y - y;
+	int32_t dx = (int32_t) mouse_pos.x - x;
+	int32_t dy = (int32_t) mouse_pos.y - y;
 
 	bool handled = false;
 
 	if (gui)
 	{
 		ImGuiIO &io = ImGui::GetIO();
-		handled = io.WantCaptureMouse;
+		handled     = io.WantCaptureMouse;
 	}
 
 	if (handled)
 	{
-		mouse_pos = glm::vec2((float)x, (float)y);
+		mouse_pos = glm::vec2((float) x, (float) y);
 		return;
 	}
 
@@ -200,5 +247,35 @@ void forward_plus::handle_mouse_move(int32_t x, int32_t y)
 		camera.translate(glm::vec3(-dx * 0.01f, -dy * 0.01f, 0.0f));
 		view_updated = true;
 	}
-	mouse_pos = glm::vec2((float)x, (float)y);
+	mouse_pos = glm::vec2((float) x, (float) y);
+}
+
+void forward_plus::render(float delta_time)
+{
+	prepare_offscreen_buffer();
+}
+
+void forward_plus::prepare_offscreen_buffer()
+{
+}
+
+void forward_plus::load_assets()
+{
+}
+
+void forward_plus::prepare_pipelines()
+{
+}
+
+void forward_plus::prepare_uniform_buffers()
+{
+}
+
+void forward_plus::update_uniform_buffers()
+{
+}
+
+std::unique_ptr<vkb::Application> create_forward_plus()
+{
+	return std::unique_ptr<vkb::Application>();
 }
