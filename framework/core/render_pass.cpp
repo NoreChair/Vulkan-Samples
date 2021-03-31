@@ -411,6 +411,7 @@ void RenderPass::create_renderpass(const std::vector<Attachment> &attachments, c
 		}
 
 		subpass_description.pColorAttachments = color_attachments[0].data();
+		subpass_description.colorAttachmentCount = to_u32(color_attachments[0].size());
 
 		if (default_depth_stencil_attachment != VK_ATTACHMENT_UNUSED)
 		{
