@@ -6,9 +6,27 @@
 #include "camera.h"
 #include "platform/platform.h"
 #include "vulkan_sample.h"
+#include <initializer_list>
+#include <unordered_map>
 
 class forward_plus : public vkb::VulkanSample
 {
+	enum RenderPassOrder : uint32_t
+	{
+		DepthPrePassOrder = 1000
+	};
+
+	// Synchronization semaphores
+	struct FrameBarrier
+	{
+		// Swap chain image presentation
+		VkSemaphore acquired_image_ready;
+
+		// Command buffer submission and execution
+		VkSemaphore render_complete;
+		VkFence     fence;
+	};
+
 	struct Models
 	{
 		std::unique_ptr<vkb::sg::SubMesh>              skybox;
@@ -31,9 +49,9 @@ class forward_plus : public vkb::VulkanSample
 
 	struct RenderPassEntry
 	{
-		std::unique_ptr<vkb::Framebuffer>                 frameBuffer;
-		std::unique_ptr<vkb::RenderPass>                  renderPass;
-		std::vector<std::unique_ptr<vkb::GraphicsPipeline>> pipelines;
+		std::unique_ptr<vkb::Framebuffer>                        frameBuffer;
+		std::unique_ptr<vkb::RenderPass>                         renderPass;
+		std::map<size_t, std::unique_ptr<vkb::GraphicsPipeline>> pipelines;
 	};
 
 	struct MouseButton
@@ -47,6 +65,24 @@ class forward_plus : public vkb::VulkanSample
 	{
 		int32_t x = 0;
 		int32_t y = 0;
+	};
+
+	struct ShaderProgram
+	{
+		ShaderProgram(std::shared_ptr<vkb::ShaderModule>&& shader)
+		{
+			shaderModules.emplace_back(shader);
+		}
+
+		ShaderProgram(std::initializer_list<std::shared_ptr<vkb::ShaderModule>> &&params)
+		{
+			for (auto ptr = params.begin(); ptr != params.end(); ++ptr)
+			{
+				shaderModules.emplace_back(*ptr);
+			}
+		}
+
+		std::vector<std::shared_ptr<vkb::ShaderModule>> shaderModules;
 	};
 
   private:
@@ -68,32 +104,38 @@ class forward_plus : public vkb::VulkanSample
 	void update_uniform_buffers();
 
   private:
-	const std::string title = "Vulkan Example";
-	const std::string name  = "Forward Plus";
-
+	const std::string k_title               = "Vulkan Example";
+	const std::string k_name                = "Forward Plus";
+	const std::string k_vertexShaderEntry   = "VertexEntry";
+	const std::string k_fragmentShaderEntry = "FragmentEntry";
+	const std::string k_computeShaderEntry  = "ComputeEntry";
 	/*                            Camera                           */
-	float       zoom         = 0;
-	bool        view_updated = false;
-	glm::vec3   rotation     = glm::vec3();
-	glm::vec3   camera_pos   = glm::vec3();
+	float       zoom        = 0;
+	bool        viewUpdated = false;
+	glm::vec3   rotation    = glm::vec3();
+	glm::vec3   cameraPos   = glm::vec3();
 	vkb::Camera camera;
 
 	/*                            Input                           */
 	// true if application has focused, false if moved to background
-	bool focused    = false;
-	bool touch_down = false;
+	bool focused   = false;
+	bool touchDown = false;
 	// Use to adjust mouse rotation speed
-	float rotation_speed = 1.0f;
+	float rotationSpeed = 1.0f;
 	// Use to adjust mouse zoom speed
-	float       zoom_speed    = 1.0f;
-	double      touch_timer   = 0.0;
-	int64_t     last_tap_time = 0;
-	glm::vec2   mouse_pos     = glm::vec2();
-	MouseButton mouse_buttons;
-	TouchPos    touch_pos;
+	float       zoomSpeed   = 1.0f;
+	double      touchTimer  = 0.0;
+	int64_t     lastTapTime = 0;
+	glm::vec2   mousePos    = glm::vec2();
+	MouseButton mouseButtons;
+	TouchPos    touchPos;
 
 	/*                            Rendering                        */
-	RenderPassEntry depthPass{};
+	std::unique_ptr<vkb::FencePool>           fencesPool;
+	std::unique_ptr<vkb::SemaphorePool>       semaphorePool;
+	std::unordered_map<size_t, ShaderProgram> shaderProgramPool;
+	std::vector<FrameBarrier>                 frameBarrier;
+	RenderPassEntry                           depthPass{};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
