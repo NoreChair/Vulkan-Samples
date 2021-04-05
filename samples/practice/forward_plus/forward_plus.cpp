@@ -1,4 +1,7 @@
 #include "forward_plus.h"
+#include "api_vulkan_sample.h"
+#include "gltf_loader.h"
+
 using namespace vkb;
 using namespace vkb::core;
 
@@ -22,7 +25,6 @@ bool forward_plus::prepare(Platform &platform)
 
 	{
 		// synchronization
-		fencesPool    = std::make_unique<FencePool>(refDevice);
 		semaphorePool = std::make_unique<SemaphorePool>(refDevice);
 	}
 
@@ -35,33 +37,30 @@ bool forward_plus::prepare(Platform &platform)
 	images.push_back(std::move(depthImage));
 	RenderTarget renderTarget(std::move(images));
 
+	// Public pipeline state
+	// see api_vulkan_sample::Vertex
+	// TODO : separate skinning mesh and static mesh
+	VertexInputState defaultVertexInput;
+	defaultVertexInput.bindings.emplace_back(VkVertexInputBindingDescription{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX});
+	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});                         //Position
+	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(glm::vec3)});         // Normal
+	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(glm::vec3) * 2});        // UV
+
+	DepthStencilState defaultDepthState;        // depth test/write
+
+	ColorBlendState defaultColorState;
+	ColorBlendState depthOnlyColorState;
 	{
-		// Load Shader
-		// TODO : shader variant
-		ShaderVariant            emptyVariant{};
-		std::vector<std::string> shaderSourceFiles{};
-		std::vector<std::string> computeSourceFiles{};
-		// assmue shader source contain vertex and fragment
-		for (int i = 0; i < shaderSourceFiles.size(); ++i)
-		{
-			ShaderSource source(shaderSourceFiles[i]);
-			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, source, k_vertexShaderEntry, emptyVariant);
-			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, source, k_fragmentShaderEntry, emptyVariant);
-			size_t       uid      = std::hash<std::string>{}(shaderSourceFiles[i]);
+		ColorBlendAttachmentState defaultAttaState;
+		//ColorBlendAttachmentState blendAttaState;
+		//blendAttaState.blend_enable           = VK_TRUE;
+		//blendAttaState.src_color_blend_factor = blendAttaState.src_alpha_blend_factor = VK_BLEND_FACTOR_SRC_ALPHA;
+		//blendAttaState.dst_color_blend_factor = blendAttaState.dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		ColorBlendAttachmentState depthOnlyAttaState;
+		depthOnlyAttaState.color_write_mask = 0;
 
-			std::initializer_list<std::shared_ptr<ShaderModule>> initList{std::move(shaderVS), std::move(shaderFS)};
-			ShaderProgram                                        program(std::move(initList));
-			shaderProgramPool.insert(std::make_pair(uid, std::move(program)));
-		}
-
-		for (int i = 0; i < computeSourceFiles.size(); i++)
-		{
-			ShaderSource source(computeSourceFiles[i]);
-			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_computeShaderEntry, emptyVariant);
-			size_t       uid      = std::hash<std::string>{}(computeSourceFiles[i]);
-			ShaderProgram program(std::move(shaderCS));
-			shaderProgramPool.insert(std::make_pair(uid, std::move(program)));
-		}
+		defaultColorState.attachments.push_back(defaultAttaState);
+		depthOnlyColorState.attachments.push_back(depthOnlyAttaState);
 	}
 
 	{
@@ -73,14 +72,17 @@ bool forward_plus::prepare(Platform &platform)
 		depthPass.renderPass  = std::make_unique<RenderPass>(refDevice, renderTarget.get_attachments(), loadStoreInfos, subPassInfos);
 		depthPass.frameBuffer = std::make_unique<Framebuffer>(refDevice, renderTarget, *depthPass.renderPass.get());
 
-		// TODO :
-		std::vector<ShaderModule *> depthPassShaders;
-		VkPipelineCache             pipelineCache{};
-		PipelineLayout              layout(refDevice, depthPassShaders);
-		PipelineState               depthOnlyPipelineState;
+		ShaderProgram * depthProgram = ShaderProgram::Find(std::string("DepthOnly"));
+		VkPipelineCache pipelineCache{};
+		PipelineLayout  layout(refDevice, depthProgram->GetShaderModules());
+		PipelineState   depthOnlyPipelineState{};
 		depthOnlyPipelineState.set_pipeline_layout(layout);
+		depthOnlyPipelineState.set_render_pass(*depthPass.renderPass.get());
+		depthOnlyPipelineState.set_vertex_input_state(defaultVertexInput);
+		depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
+		depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
 		auto pbo = std::make_unique<GraphicsPipeline>(refDevice, pipelineCache, depthOnlyPipelineState);
-		depthPass.pipelines.insert(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo)));
+		depthPass.pipelines.insert(std::move(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo))));
 	}
 
 	return true;
@@ -285,6 +287,52 @@ void forward_plus::handle_mouse_move(int32_t x, int32_t y)
 		viewUpdated = true;
 	}
 	mousePos = glm::vec2((float) x, (float) y);
+}
+
+void forward_plus::prepare_resource()
+{
+	Device &refDevice = *device.get();
+	{
+		// Load Shader
+		// TODO : shader variant
+		ShaderVariant            emptyVariant{};
+		std::vector<std::string> shaderSourceFiles{};
+		std::vector<std::string> computeSourceFiles{};
+		// assmue shader source contain vertex and fragment
+		for (int i = 0; i < shaderSourceFiles.size(); ++i)
+		{
+			ShaderSource source(shaderSourceFiles[i]);
+			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, source, k_vertexShaderEntry, emptyVariant);
+			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, source, k_fragmentShaderEntry, emptyVariant);
+
+			std::initializer_list<std::shared_ptr<ShaderModule>> initList{std::move(shaderVS), std::move(shaderFS)};
+
+			auto program = std::make_shared<ShaderProgram>(std::move(initList));
+			ShaderProgram::AddShaderProgram(shaderSourceFiles[i], std::move(program));
+		}
+
+		for (int i = 0; i < computeSourceFiles.size(); i++)
+		{
+			ShaderSource source(computeSourceFiles[i]);
+			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_computeShaderEntry, emptyVariant);
+			auto         program  = std::make_shared<ShaderProgram>(std::move(shaderCS));
+			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
+		}
+	}
+
+	{
+		// Load Model && Texture
+		vkb::GLTFLoader loader{*device};
+
+		std::string file;
+		sceneModel = loader.read_model_from_file(file, 0);
+
+		if (!sceneModel)
+		{
+			LOGE("Cannot load model from file: {}", file.c_str());
+			throw std::runtime_error("Cannot load model from: " + file);
+		}
+	}
 }
 
 void forward_plus::render(float delta_time)

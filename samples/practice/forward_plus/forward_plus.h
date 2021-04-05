@@ -9,6 +9,16 @@
 #include <initializer_list>
 #include <unordered_map>
 
+#if defined(DEBUG) || defined(_DEBUG)
+#	define DEBUG_ASSERT(exp, ...) \
+		{                          \
+			assert(exp);           \
+			LOGD(__VA_ARGS__)      \
+		}
+#else
+#	define DEBUG_ASSERT(exp, ...) 0
+#endif
+
 class forward_plus : public vkb::VulkanSample
 {
 	enum RenderPassOrder : uint32_t
@@ -69,20 +79,85 @@ class forward_plus : public vkb::VulkanSample
 
 	struct ShaderProgram
 	{
-		ShaderProgram(std::shared_ptr<vkb::ShaderModule>&& shader)
+		ShaderProgram(std::shared_ptr<vkb::ShaderModule> &&shader)
 		{
-			shaderModules.emplace_back(shader);
+			shaderModules.push_back(shader);
+			programStageFlag = shader->get_stage();
 		}
 
 		ShaderProgram(std::initializer_list<std::shared_ptr<vkb::ShaderModule>> &&params)
 		{
 			for (auto ptr = params.begin(); ptr != params.end(); ++ptr)
 			{
-				shaderModules.emplace_back(*ptr);
+				shaderModules.push_back(*ptr);
+				programStageFlag = (VkShaderStageFlagBits)((int) programStageFlag | (int) (*ptr)->get_stage());
 			}
 		}
 
-		std::vector<std::shared_ptr<vkb::ShaderModule>> shaderModules;
+		std::vector<vkb::ShaderModule *> GetShaderModules()
+		{
+			std::vector<vkb::ShaderModule *> modules;
+			std::transform(shaderModules.begin(), shaderModules.end(), modules.begin(), [](std::shared_ptr<vkb::ShaderModule> &item) { return item.get(); });
+			return modules;
+		}
+
+		bool IsGraphicProgram()
+		{
+			return (programStageFlag & VK_SHADER_STAGE_ALL_GRAPHICS) != 0;
+		}
+
+		bool IsComputeProgram()
+		{
+			return (programStageFlag & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
+		}
+
+		static size_t AddShaderProgram(std::string &name, std::shared_ptr<ShaderProgram> &&program)
+		{
+			size_t uid = std::hash<std::string>{}(name);
+			AddShaderProgram(uid, std::move(program));
+			return uid;
+		}
+
+		static void AddShaderProgram(size_t uid, std::shared_ptr<ShaderProgram> &&program)
+		{
+			DEBUG_ASSERT(shaderProgramPool.find(uid) != shaderProgramPool.end(), "Shader program uid collision");
+			shaderProgramPool.emplace(uid, std::move(program));
+		}
+
+		static void RemoveShaderProgram(size_t uid)
+		{
+			auto iter = shaderProgramPool.find(uid);
+			if (iter != shaderProgramPool.end())
+			{
+				shaderProgramPool.erase(iter);
+			}
+		}
+
+		static ShaderProgram *Find(std::string &name)
+		{
+			size_t uid  = std::hash<std::string>{}(name);
+			auto   iter = shaderProgramPool.find(uid);
+			if (iter != shaderProgramPool.end())
+			{
+				return iter->second.get();
+			}
+			return nullptr;
+		}
+
+		static ShaderProgram *Find(size_t uid)
+		{
+			auto iter = shaderProgramPool.find(uid);
+			if (iter != shaderProgramPool.end())
+			{
+				return iter->second.get();
+			}
+			return nullptr;
+		}
+
+	  private:
+		static std::unordered_map<size_t, std::shared_ptr<ShaderProgram>> shaderProgramPool;
+		VkShaderStageFlagBits                                             programStageFlag;
+		std::vector<std::shared_ptr<vkb::ShaderModule>>                   shaderModules;
 	};
 
   private:
@@ -96,6 +171,7 @@ class forward_plus : public vkb::VulkanSample
 	virtual void input_event(const vkb::InputEvent &input_event) override;
 	void         handle_mouse_move(int32_t x, int32_t y);
 
+	void prepare_resource();
 	void render(float delta_time);
 	void prepare_offscreen_buffer();
 	void load_assets();
@@ -131,11 +207,12 @@ class forward_plus : public vkb::VulkanSample
 	TouchPos    touchPos;
 
 	/*                            Rendering                        */
-	std::unique_ptr<vkb::FencePool>           fencesPool;
-	std::unique_ptr<vkb::SemaphorePool>       semaphorePool;
-	std::unordered_map<size_t, ShaderProgram> shaderProgramPool;
-	std::vector<FrameBarrier>                 frameBarrier;
-	RenderPassEntry                           depthPass{};
+	std::unique_ptr<vkb::SemaphorePool> semaphorePool;
+	std::vector<FrameBarrier>           frameBarrier;
+	RenderPassEntry                     depthPass{};
+
+	/*                            Resources                        */
+	std::unique_ptr<vkb::sg::SubMesh> sceneModel;
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
