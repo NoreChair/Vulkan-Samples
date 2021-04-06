@@ -5,6 +5,8 @@
 using namespace vkb;
 using namespace vkb::core;
 
+std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>> forward_plus::ShaderProgram::shaderProgramPool = std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>>();
+
 forward_plus::forward_plus()
 {
 	set_name(k_name);
@@ -21,21 +23,25 @@ bool forward_plus::prepare(Platform &platform)
 		return false;
 	}
 
-	Device &refDevice = *device.get();
+	int windowWidth  = platform.get_window().get_width();
+	int windowHeight = platform.get_window().get_height();
 
+	Device &refDevice = *device.get();
 	{
 		// synchronization
 		semaphorePool = std::make_unique<SemaphorePool>(refDevice);
 	}
 
 	// Create Image
-	VkExtent3D extent{platform.get_window().get_width(), platform.get_window().get_height(), 1};
+	VkExtent3D extent{windowWidth, windowHeight, 1};
 	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
+	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	// Create Render Target
-	std::vector<Image> images;
-	images.push_back(std::move(depthImage));
-	RenderTarget renderTarget(std::move(images));
+	std::vector<Image> offScreenImages;
+	offScreenImages.push_back(std::move(depthImage));
+	offScreenImages.push_back(std::move(colorImage));
+	RenderTarget renderTarget(std::move(offScreenImages));
 
 	// Public pipeline state
 	// see api_vulkan_sample::Vertex
@@ -85,6 +91,13 @@ bool forward_plus::prepare(Platform &platform)
 		depthPass.pipelines.insert(std::move(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo))));
 	}
 
+	{
+		camera.type = vkb::CameraType::LookAt;
+		camera.set_position(glm::vec3(0.0f, 0.0f, -4.0f));
+		camera.set_rotation(glm::vec3(0.0f, 180.0f, 0.0f));
+		// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
+		camera.set_perspective(60.0f, (float) windowWidth / (float) windowHeight, 1000.0f, 0.1f);
+	}
 	return true;
 }
 
@@ -322,16 +335,18 @@ void forward_plus::prepare_resource()
 
 	{
 		// Load Model && Texture
-		vkb::GLTFLoader loader{*device};
+		//vkb::GLTFLoader loader{*device};
 
-		std::string file;
-		sceneModel = loader.read_model_from_file(file, 0);
+		//std::string file;
+		//sceneModel = loader.read_model_from_file(file, 0);
 
-		if (!sceneModel)
-		{
-			LOGE("Cannot load model from file: {}", file.c_str());
-			throw std::runtime_error("Cannot load model from: " + file);
-		}
+		//if (!sceneModel)
+		//{
+		//	LOGE("Cannot load model from file: {}", file.c_str());
+		//	throw std::runtime_error("Cannot load model from: " + file);
+		//}
+
+		load_scene("scenes/sponza/Sponza01.gltf");
 	}
 }
 

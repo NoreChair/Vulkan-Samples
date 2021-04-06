@@ -211,8 +211,6 @@ class forward_plus : public vkb::VulkanSample
 	std::vector<FrameBarrier>           frameBarrier;
 	RenderPassEntry                     depthPass{};
 
-	/*                            Resources                        */
-	std::unique_ptr<vkb::sg::SubMesh> sceneModel;
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
