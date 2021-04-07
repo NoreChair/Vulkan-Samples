@@ -78,6 +78,12 @@ void BufferBlock::reset()
 	offset = 0;
 }
 
+VkDeviceSize BufferBlock::get_spare_size() const
+{
+	auto aligned_offset = (offset + alignment - 1) & ~(alignment - 1);
+	return buffer.get_size() - aligned_offset;
+}
+
 BufferPool::BufferPool(Device &device, VkDeviceSize block_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage) :
     device{device},
     block_size{block_size},
@@ -90,9 +96,14 @@ BufferBlock &BufferPool::request_buffer_block(const VkDeviceSize minimum_size)
 {
 	// Find the first block in the range of the inactive blocks
 	// which can fit the minimum size
+#define MEMORY_COMPACT
+#if defined(MEMORY_COMPACT)
+	auto it = std::upper_bound(buffer_blocks.begin() + active_buffer_block_count, buffer_blocks.end(), minimum_size,
+	                           [](const VkDeviceSize &a, const std::unique_ptr<BufferBlock> &b) -> bool { return a <= b->get_spare_size(); });
+#else
 	auto it = std::upper_bound(buffer_blocks.begin() + active_buffer_block_count, buffer_blocks.end(), minimum_size,
 	                           [](const VkDeviceSize &a, const std::unique_ptr<BufferBlock> &b) -> bool { return a <= b->get_size(); });
-
+#endif
 	if (it != buffer_blocks.end())
 	{
 		// Recycle inactive block

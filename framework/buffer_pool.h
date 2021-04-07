@@ -84,6 +84,8 @@ class BufferBlock
 
 	void reset();
 
+	VkDeviceSize get_spare_size() const;
+
   private:
 	core::Buffer buffer;
 
