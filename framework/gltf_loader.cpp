@@ -619,7 +619,8 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 		for (auto &gltf_primitive : gltf_mesh.primitives)
 		{
 			auto submesh = std::make_unique<sg::SubMesh>();
-
+			// TODO : https://www.khronos.org/opengl/wiki/Talk:Vertex_Specification_Best_Practices
+			// Whatever,vertex data separate in its own VBO is a bad idea
 			for (auto &attribute : gltf_primitive.attributes)
 			{
 				std::string attrib_name = attribute.first;
@@ -635,7 +636,7 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 				core::Buffer buffer{device,
 				                    vertex_data.size(),
 				                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				                    VMA_MEMORY_USAGE_GPU_TO_CPU};
+				                    VMA_MEMORY_USAGE_GPU_ONLY};
 				buffer.update(vertex_data);
 
 				submesh->vertex_buffers.insert(std::make_pair(attrib_name, std::move(buffer)));
@@ -646,15 +647,13 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 
 				submesh->set_attribute(attrib_name, attrib);
 			}
-
 			if (gltf_primitive.indices >= 0)
 			{
 				submesh->vertex_indices = to_u32(get_attribute_size(&model, gltf_primitive.indices));
 
 				auto format = get_attribute_format(&model, gltf_primitive.indices);
 
-				auto vertex_data = get_attribute_data(&model, gltf_primitive.indices);
-				auto index_data  = get_attribute_data(&model, gltf_primitive.indices);
+				auto index_data = get_attribute_data(&model, gltf_primitive.indices);
 
 				switch (format)
 				{
@@ -677,7 +676,7 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 				submesh->index_buffer = std::make_unique<core::Buffer>(device,
 				                                                       index_data.size(),
 				                                                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				                                                       VMA_MEMORY_USAGE_GPU_TO_CPU);
+				                                                       VMA_MEMORY_USAGE_GPU_ONLY);
 
 				submesh->index_buffer->update(index_data);
 			}
