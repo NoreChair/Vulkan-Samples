@@ -22,20 +22,18 @@ bool forward_plus::prepare(Platform &platform)
 	{
 		return false;
 	}
-
-	int windowWidth  = platform.get_window().get_width();
-	int windowHeight = platform.get_window().get_height();
+	uint32_t windowWidth  = platform.get_window().get_width();
+	uint32_t windowHeight = platform.get_window().get_height();
 
 	Device &refDevice = *device.get();
-	{
-		// synchronization
-		semaphorePool = std::make_unique<SemaphorePool>(refDevice);
-	}
 
-	// Create Image
+	prepare_resources();
+	prepare_camera();
+
+	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
 	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
-	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	// Create Render Target
 	std::vector<Image> offScreenImages;
@@ -44,13 +42,13 @@ bool forward_plus::prepare(Platform &platform)
 	RenderTarget renderTarget(std::move(offScreenImages));
 
 	// Public pipeline state
-	// see api_vulkan_sample::Vertex
+	// gltf_loader::load_scene seperate vertex data in its own buffer
 	// TODO : separate skinning mesh and static mesh
 	VertexInputState defaultVertexInput;
 	defaultVertexInput.bindings.emplace_back(VkVertexInputBindingDescription{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX});
-	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});                         //Position
-	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(glm::vec3)});         // Normal
-	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(glm::vec3) * 2});        // UV
+	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});        //Position
+	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});        // Normal
+	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{2, 0, VK_FORMAT_R32G32_SFLOAT, 0});           // UV
 
 	DepthStencilState defaultDepthState;        // depth test/write
 
@@ -78,7 +76,7 @@ bool forward_plus::prepare(Platform &platform)
 		depthPass.renderPass  = std::make_unique<RenderPass>(refDevice, renderTarget.get_attachments(), loadStoreInfos, subPassInfos);
 		depthPass.frameBuffer = std::make_unique<Framebuffer>(refDevice, renderTarget, *depthPass.renderPass.get());
 
-		ShaderProgram * depthProgram = ShaderProgram::Find(std::string("DepthOnly"));
+		ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus\depth_only"));
 		VkPipelineCache pipelineCache{};
 		PipelineLayout  layout(refDevice, depthProgram->GetShaderModules());
 		PipelineState   depthOnlyPipelineState{};
@@ -90,23 +88,32 @@ bool forward_plus::prepare(Platform &platform)
 		auto pbo = std::make_unique<GraphicsPipeline>(refDevice, pipelineCache, depthOnlyPipelineState);
 		depthPass.pipelines.insert(std::move(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo))));
 	}
-
-	{
-		camera.type = vkb::CameraType::LookAt;
-		camera.set_position(glm::vec3(0.0f, 0.0f, -4.0f));
-		camera.set_rotation(glm::vec3(0.0f, 180.0f, 0.0f));
-		// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
-		camera.set_perspective(60.0f, (float) windowWidth / (float) windowHeight, 1000.0f, 0.1f);
-	}
 	return true;
+}
+
+void forward_plus::update(float delta_time)
+{
+	update_scene(delta_time);
+
+	update_gui(delta_time);
+
+	RenderContext &context       = get_render_context();
+	CommandBuffer &commandBuffer = context.begin();
+	commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+	// TODO : bind pipeline and descripotr set
+	// draw to render target and presen to screen
+	commandBuffer.end();
+	context.submit(commandBuffer);
 }
 
 void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
 {
+	VulkanSample::request_gpu_features(gpu);
 }
 
 void forward_plus::resize(const uint32_t width, const uint32_t height)
 {
+	VulkanSample::resize(width, height);
 }
 
 void forward_plus::input_event(const vkb::InputEvent &input_event)
@@ -302,21 +309,22 @@ void forward_plus::handle_mouse_move(int32_t x, int32_t y)
 	mousePos = glm::vec2((float) x, (float) y);
 }
 
-void forward_plus::prepare_resource()
+void forward_plus::prepare_resources()
 {
 	Device &refDevice = *device.get();
 	{
 		// Load Shader
 		// TODO : shader variant
 		ShaderVariant            emptyVariant{};
-		std::vector<std::string> shaderSourceFiles{};
+		std::vector<std::string> shaderSourceFiles{"forward_plus\depth_only"};
 		std::vector<std::string> computeSourceFiles{};
 		// assmue shader source contain vertex and fragment
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
 		{
-			ShaderSource source(shaderSourceFiles[i]);
-			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, source, k_vertexShaderEntry, emptyVariant);
-			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, source, k_fragmentShaderEntry, emptyVariant);
+			ShaderSource vsSource(shaderSourceFiles[i] + ".vert");
+			ShaderSource fsSource(shaderSourceFiles[i] + ".frag");
+			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, vsSource, k_shaderEntry, emptyVariant);
+			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, k_shaderEntry, emptyVariant);
 
 			std::initializer_list<std::shared_ptr<ShaderModule>> initList{std::move(shaderVS), std::move(shaderFS)};
 
@@ -326,40 +334,30 @@ void forward_plus::prepare_resource()
 
 		for (int i = 0; i < computeSourceFiles.size(); i++)
 		{
-			ShaderSource source(computeSourceFiles[i]);
-			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_computeShaderEntry, emptyVariant);
+			ShaderSource source(computeSourceFiles[i] + ".comp");
+			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_shaderEntry, emptyVariant);
 			auto         program  = std::make_shared<ShaderProgram>(std::move(shaderCS));
 			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
 		}
 	}
 
 	{
-		// Load Model && Texture
-		//vkb::GLTFLoader loader{*device};
-
-		//std::string file;
-		//sceneModel = loader.read_model_from_file(file, 0);
-
-		//if (!sceneModel)
-		//{
-		//	LOGE("Cannot load model from file: {}", file.c_str());
-		//	throw std::runtime_error("Cannot load model from: " + file);
-		//}
-
+		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
 		load_scene("scenes/sponza/Sponza01.gltf");
 	}
 }
 
+void forward_plus::prepare_camera()
+{
+	VkExtent2D extent = get_render_context().get_surface_extent();
+	camera.type       = vkb::CameraType::LookAt;
+	camera.set_position(glm::vec3(0.0f, 0.0f, -4.0f));
+	camera.set_rotation(glm::vec3(0.0f, 180.0f, 0.0f));
+	// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
+	camera.set_perspective(60.0f, (float) extent.width / (float) extent.height, 1000.0f, 0.1f);
+}
+
 void forward_plus::render(float delta_time)
-{
-	prepare_offscreen_buffer();
-}
-
-void forward_plus::prepare_offscreen_buffer()
-{
-}
-
-void forward_plus::load_assets()
 {
 }
 

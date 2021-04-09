@@ -96,8 +96,8 @@ class forward_plus : public vkb::VulkanSample
 
 		std::vector<vkb::ShaderModule *> GetShaderModules()
 		{
-			std::vector<vkb::ShaderModule *> modules;
-			std::transform(shaderModules.begin(), shaderModules.end(), modules.begin(), [](std::shared_ptr<vkb::ShaderModule> &item) { return item.get(); });
+			std::vector<vkb::ShaderModule *> modules(shaderModules.size());
+			std::transform(shaderModules.begin(), shaderModules.end(), modules.begin(), [](const std::shared_ptr<vkb::ShaderModule> &item){ return item.get(); });
 			return modules;
 		}
 
@@ -167,14 +167,13 @@ class forward_plus : public vkb::VulkanSample
 	virtual bool prepare(vkb::Platform &platform) override;
 	virtual void request_gpu_features(vkb::PhysicalDevice &gpu) override;
 	virtual void resize(const uint32_t width, const uint32_t height) override;
-
+	virtual void update(float delta_time) override;
 	virtual void input_event(const vkb::InputEvent &input_event) override;
 	void         handle_mouse_move(int32_t x, int32_t y);
 
-	void prepare_resource();
+	void prepare_resources();
+	void prepare_camera();
 	void render(float delta_time);
-	void prepare_offscreen_buffer();
-	void load_assets();
 	void prepare_pipelines();
 	void prepare_uniform_buffers();
 	void update_uniform_buffers();
@@ -182,9 +181,8 @@ class forward_plus : public vkb::VulkanSample
   private:
 	const std::string k_title               = "Vulkan Example";
 	const std::string k_name                = "Forward Plus";
-	const std::string k_vertexShaderEntry   = "VertexEntry";
-	const std::string k_fragmentShaderEntry = "FragmentEntry";
-	const std::string k_computeShaderEntry  = "ComputeEntry";
+	const std::string k_shaderEntry   = "main";
+
 	/*                            Camera                           */
 	float       zoom        = 0;
 	bool        viewUpdated = false;
@@ -207,8 +205,6 @@ class forward_plus : public vkb::VulkanSample
 	TouchPos    touchPos;
 
 	/*                            Rendering                        */
-	std::unique_ptr<vkb::SemaphorePool> semaphorePool;
-	std::vector<FrameBarrier>           frameBarrier;
 	RenderPassEntry                     depthPass{};
 
 };
