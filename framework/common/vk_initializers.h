@@ -593,5 +593,19 @@ inline VkSpecializationInfo specialization_info(uint32_t map_entry_count, const 
 	specialization_info.pData         = data;
 	return specialization_info;
 }
+
+inline VkClearValue clear_color_value(float r, float g, float b, float a)
+{
+	VkClearValue clearValue;
+	clearValue.color = VkClearColorValue{r, g, b, a};
+	return clearValue;
+}
+
+inline VkClearValue clear_depth_stencil_value(float depth, uint32_t stencil)
+{
+	VkClearValue clearValue;
+	clearValue.depthStencil = VkClearDepthStencilValue{depth, stencil};
+	return clearValue;
+}
 }        // namespace initializers
 }        // namespace vkb

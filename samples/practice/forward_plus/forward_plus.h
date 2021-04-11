@@ -19,6 +19,9 @@
 #	define DEBUG_ASSERT(exp, ...) 0
 #endif
 
+class vkb::sg::Node;
+class vkb::sg::SubMesh;
+
 class forward_plus : public vkb::VulkanSample
 {
 	enum RenderPassOrder : uint32_t
@@ -26,42 +29,35 @@ class forward_plus : public vkb::VulkanSample
 		DepthPrePassOrder = 1000
 	};
 
-	// Synchronization semaphores
-	struct FrameBarrier
-	{
-		// Swap chain image presentation
-		VkSemaphore acquired_image_ready;
 
-		// Command buffer submission and execution
-		VkSemaphore render_complete;
-		VkFence     fence;
-	};
-
-	struct Models
+	struct alignas(16) GlobalUniform
 	{
-		std::unique_ptr<vkb::sg::SubMesh>              skybox;
-		std::vector<std::unique_ptr<vkb::sg::SubMesh>> objects;
-		std::vector<glm::mat4>                         transforms;
-		int32_t                                        object_index = 0;
-	};
-
-	struct UniformBuffers
-	{
-		std::unique_ptr<vkb::core::Buffer> matrix;
-		std::unique_ptr<vkb::core::Buffer> materialParams;
-	};
-
-	struct MatrixUniforms
-	{
-		glm::mat4 model_view;
-		glm::mat4 project;
+		glm::mat4 model;
+		glm::mat4 view_project;
+		glm::vec3 camera_position;
 	};
 
 	struct RenderPassEntry
 	{
+		std::shared_ptr<vkb::RenderTarget>                       renderTarget;
 		std::unique_ptr<vkb::Framebuffer>                        frameBuffer;
 		std::unique_ptr<vkb::RenderPass>                         renderPass;
 		std::map<size_t, std::unique_ptr<vkb::GraphicsPipeline>> pipelines;
+
+		inline vkb::RenderTarget& GetRenderTarget()
+		{
+			return *renderTarget.get();
+		}
+
+		inline vkb::Framebuffer& GetFrameBuffer()
+		{
+			return *frameBuffer.get();
+		}
+
+		inline vkb::RenderPass& GetRenderPass()
+		{
+			return *renderPass.get();
+		}
 	};
 
 	struct MouseButton
@@ -87,6 +83,7 @@ class forward_plus : public vkb::VulkanSample
 
 		ShaderProgram(std::initializer_list<std::shared_ptr<vkb::ShaderModule>> &&params)
 		{
+			programStageFlag = (VkShaderStageFlagBits) 0;
 			for (auto ptr = params.begin(); ptr != params.end(); ++ptr)
 			{
 				shaderModules.push_back(*ptr);
@@ -97,7 +94,7 @@ class forward_plus : public vkb::VulkanSample
 		std::vector<vkb::ShaderModule *> GetShaderModules()
 		{
 			std::vector<vkb::ShaderModule *> modules(shaderModules.size());
-			std::transform(shaderModules.begin(), shaderModules.end(), modules.begin(), [](const std::shared_ptr<vkb::ShaderModule> &item){ return item.get(); });
+			std::transform(shaderModules.begin(), shaderModules.end(), modules.begin(), [](const std::shared_ptr<vkb::ShaderModule> &item) { return item.get(); });
 			return modules;
 		}
 
@@ -160,10 +157,11 @@ class forward_plus : public vkb::VulkanSample
 		std::vector<std::shared_ptr<vkb::ShaderModule>>                   shaderModules;
 	};
 
-  private:
+  public:
 	forward_plus();
 	~forward_plus();
 
+  private:
 	virtual bool prepare(vkb::Platform &platform) override;
 	virtual void request_gpu_features(vkb::PhysicalDevice &gpu) override;
 	virtual void resize(const uint32_t width, const uint32_t height) override;
@@ -178,10 +176,12 @@ class forward_plus : public vkb::VulkanSample
 	void prepare_uniform_buffers();
 	void update_uniform_buffers();
 
+	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
+
   private:
-	const std::string k_title               = "Vulkan Example";
-	const std::string k_name                = "Forward Plus";
-	const std::string k_shaderEntry   = "main";
+	const std::string k_title       = "Vulkan Example";
+	const std::string k_name        = "Forward Plus";
+	const std::string k_shaderEntry = "main";
 
 	/*                            Camera                           */
 	float       zoom        = 0;
@@ -205,8 +205,7 @@ class forward_plus : public vkb::VulkanSample
 	TouchPos    touchPos;
 
 	/*                            Rendering                        */
-	RenderPassEntry                     depthPass{};
-
+	RenderPassEntry opaquePass{};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();

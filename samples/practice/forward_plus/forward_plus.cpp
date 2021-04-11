@@ -1,6 +1,10 @@
 #include "forward_plus.h"
 #include "api_vulkan_sample.h"
 #include "gltf_loader.h"
+#include "scene_graph/node.h"
+#include "scene_graph/components/material.h"
+#include "scene_graph/components/mesh.h"
+#include "scene_graph/components/sub_mesh.h"
 
 using namespace vkb;
 using namespace vkb::core;
@@ -37,9 +41,9 @@ bool forward_plus::prepare(Platform &platform)
 
 	// Create Render Target
 	std::vector<Image> offScreenImages;
-	offScreenImages.push_back(std::move(depthImage));
 	offScreenImages.push_back(std::move(colorImage));
-	RenderTarget renderTarget(std::move(offScreenImages));
+	offScreenImages.push_back(std::move(depthImage));
+	std::shared_ptr<RenderTarget> renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
 
 	// Public pipeline state
 	// gltf_loader::load_scene seperate vertex data in its own buffer
@@ -68,42 +72,98 @@ bool forward_plus::prepare(Platform &platform)
 	}
 
 	{
-		// Dpeth Pass
+		// Opaque
 		std::vector<LoadStoreInfo> loadStoreInfos;
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
 		std::vector<SubpassInfo> subPassInfos;
-		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-		depthPass.renderPass  = std::make_unique<RenderPass>(refDevice, renderTarget.get_attachments(), loadStoreInfos, subPassInfos);
-		depthPass.frameBuffer = std::make_unique<Framebuffer>(refDevice, renderTarget, *depthPass.renderPass.get());
+		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+		opaquePass.renderTarget = renderTarget;
+		opaquePass.renderPass   = std::make_unique<RenderPass>(refDevice, renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
+		opaquePass.frameBuffer  = std::make_unique<Framebuffer>(refDevice, *renderTarget.get(), *opaquePass.renderPass.get());
 
-		ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus\depth_only"));
-		VkPipelineCache pipelineCache{};
-		PipelineLayout  layout(refDevice, depthProgram->GetShaderModules());
-		PipelineState   depthOnlyPipelineState{};
-		depthOnlyPipelineState.set_pipeline_layout(layout);
-		depthOnlyPipelineState.set_render_pass(*depthPass.renderPass.get());
-		depthOnlyPipelineState.set_vertex_input_state(defaultVertexInput);
-		depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
-		depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
-		auto pbo = std::make_unique<GraphicsPipeline>(refDevice, pipelineCache, depthOnlyPipelineState);
-		depthPass.pipelines.insert(std::move(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo))));
+		{
+			// Dpeth Pass
+			ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
+			VkPipelineCache pipelineCache{};
+			PipelineLayout  layout(refDevice, depthProgram->GetShaderModules());
+			PipelineState   depthOnlyPipelineState{};
+			depthOnlyPipelineState.set_pipeline_layout(layout);
+			depthOnlyPipelineState.set_render_pass(*opaquePass.renderPass.get());
+			depthOnlyPipelineState.set_vertex_input_state(defaultVertexInput);
+			depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
+			depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
+			auto pbo = std::make_unique<GraphicsPipeline>(refDevice, pipelineCache, depthOnlyPipelineState);
+			opaquePass.pipelines.insert(std::move(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo))));
+		}
 	}
 	return true;
 }
 
 void forward_plus::update(float delta_time)
 {
+	camera.update(delta_time);
 	update_scene(delta_time);
+	//update_gui(delta_time);
 
-	update_gui(delta_time);
+	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> opaque_nodes;
+	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> transparent_nodes;
+	get_sorted_nodes(opaque_nodes, transparent_nodes);
 
-	RenderContext &context       = get_render_context();
+	// reverse z
+	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(1.0, 0)};
+	VkExtent2D                extent  = get_render_context().get_surface_extent();
+	RenderContext &           context = get_render_context();
+
 	CommandBuffer &commandBuffer = context.begin();
 	commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-	// TODO : bind pipeline and descripotr set
-	// draw to render target and presen to screen
+	set_viewport_and_scissor(commandBuffer, extent);
+
+	// Opaque
+	{
+		commandBuffer.begin_render_pass(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass(), opaquePass.GetFrameBuffer(), clearValue);
+		// TODO : bind pipeline and descripotr set
+		// draw to render target and presen to screen
+		for (auto node_it = opaque_nodes.begin(); node_it != opaque_nodes.end(); node_it++)
+		{
+		}
+
+		commandBuffer.end_render_pass();
+	}
 	commandBuffer.end();
 	context.submit(commandBuffer);
+}
+
+void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)
+{
+	auto camera_transform = camera.matrices.view;
+	auto meshes           = scene->get_components<sg::Mesh>();
+	for (auto &mesh : meshes)
+	{
+		for (auto &node : mesh->get_nodes())
+		{
+			auto node_transform = node->get_transform().get_world_matrix();
+
+			const sg::AABB &mesh_bounds = mesh->get_bounds();
+
+			sg::AABB world_bounds{mesh_bounds.get_min(), mesh_bounds.get_max()};
+			world_bounds.transform(node_transform);
+
+			float distance = glm::length(glm::vec3(camera_transform[3]) - world_bounds.get_center());
+
+			for (auto &sub_mesh : mesh->get_submeshes())
+			{
+				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend)
+				{
+					transparent_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+				}
+				else
+				{
+					opaque_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+				}
+			}
+		}
+	}
 }
 
 void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
@@ -316,7 +376,7 @@ void forward_plus::prepare_resources()
 		// Load Shader
 		// TODO : shader variant
 		ShaderVariant            emptyVariant{};
-		std::vector<std::string> shaderSourceFiles{"forward_plus\depth_only"};
+		std::vector<std::string> shaderSourceFiles{"forward_plus/depth_only"};
 		std::vector<std::string> computeSourceFiles{};
 		// assmue shader source contain vertex and fragment
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
@@ -375,5 +435,5 @@ void forward_plus::update_uniform_buffers()
 
 std::unique_ptr<vkb::Application> create_forward_plus()
 {
-	return std::unique_ptr<vkb::Application>();
+	return std::unique_ptr<forward_plus>();
 }
