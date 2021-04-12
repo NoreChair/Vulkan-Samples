@@ -24,42 +24,6 @@ class vkb::sg::SubMesh;
 
 class forward_plus : public vkb::VulkanSample
 {
-	enum RenderPassOrder : uint32_t
-	{
-		DepthPrePassOrder = 1000
-	};
-
-
-	struct alignas(16) GlobalUniform
-	{
-		glm::mat4 model;
-		glm::mat4 view_project;
-		glm::vec3 camera_position;
-	};
-
-	struct RenderPassEntry
-	{
-		std::shared_ptr<vkb::RenderTarget>                       renderTarget;
-		std::unique_ptr<vkb::Framebuffer>                        frameBuffer;
-		std::unique_ptr<vkb::RenderPass>                         renderPass;
-		std::map<size_t, std::unique_ptr<vkb::GraphicsPipeline>> pipelines;
-
-		inline vkb::RenderTarget& GetRenderTarget()
-		{
-			return *renderTarget.get();
-		}
-
-		inline vkb::Framebuffer& GetFrameBuffer()
-		{
-			return *frameBuffer.get();
-		}
-
-		inline vkb::RenderPass& GetRenderPass()
-		{
-			return *renderPass.get();
-		}
-	};
-
 	struct MouseButton
 	{
 		bool left   = false;
@@ -71,6 +35,41 @@ class forward_plus : public vkb::VulkanSample
 	{
 		int32_t x = 0;
 		int32_t y = 0;
+	};
+
+	enum RenderPassOrder : uint32_t
+	{
+		DepthPrePassOrder = 1000
+	};
+
+	struct alignas(16) GlobalUniform
+	{
+		glm::mat4 model;
+		glm::mat4 view_project;
+		glm::vec3 camera_position;
+	};
+
+	struct RenderPassEntry
+	{
+		std::shared_ptr<vkb::RenderTarget>   renderTarget;
+		std::unique_ptr<vkb::Framebuffer>    frameBuffer;
+		std::unique_ptr<vkb::RenderPass>     renderPass;
+		std::map<size_t, vkb::PipelineState> pipelines;
+
+		inline vkb::RenderTarget &GetRenderTarget()
+		{
+			return *renderTarget.get();
+		}
+
+		inline vkb::Framebuffer &GetFrameBuffer()
+		{
+			return *frameBuffer.get();
+		}
+
+		inline vkb::RenderPass &GetRenderPass()
+		{
+			return *renderPass.get();
+		}
 	};
 
 	struct ShaderProgram
@@ -167,15 +166,15 @@ class forward_plus : public vkb::VulkanSample
 	virtual void resize(const uint32_t width, const uint32_t height) override;
 	virtual void update(float delta_time) override;
 	virtual void input_event(const vkb::InputEvent &input_event) override;
-	void         handle_mouse_move(int32_t x, int32_t y);
 
+	void handle_mouse_move(int32_t x, int32_t y);
 	void prepare_resources();
 	void prepare_camera();
-	void render(float delta_time);
 	void prepare_pipelines();
-	void prepare_uniform_buffers();
-	void update_uniform_buffers();
-
+	void render(float delta_time);
+	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
+	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
+	void bind_pipeline_resources(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline);
 	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
 
   private:

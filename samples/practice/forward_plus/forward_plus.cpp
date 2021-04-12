@@ -1,10 +1,10 @@
 #include "forward_plus.h"
 #include "api_vulkan_sample.h"
 #include "gltf_loader.h"
-#include "scene_graph/node.h"
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/mesh.h"
 #include "scene_graph/components/sub_mesh.h"
+#include "scene_graph/node.h"
 
 using namespace vkb;
 using namespace vkb::core;
@@ -26,14 +26,71 @@ bool forward_plus::prepare(Platform &platform)
 	{
 		return false;
 	}
-	uint32_t windowWidth  = platform.get_window().get_width();
-	uint32_t windowHeight = platform.get_window().get_height();
-
-	Device &refDevice = *device.get();
 
 	prepare_resources();
 	prepare_camera();
+	prepare_pipelines();
 
+	return true;
+}
+
+void forward_plus::update(float delta_time)
+{
+	camera.update(delta_time);
+	update_scene(delta_time);
+	//update_gui(delta_time);
+	render(delta_time);
+}
+
+void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)
+{
+	auto camera_transform = camera.matrices.view;
+	auto meshes           = scene->get_components<sg::Mesh>();
+	for (auto &mesh : meshes)
+	{
+		for (auto &node : mesh->get_nodes())
+		{
+			auto node_transform = node->get_transform().get_world_matrix();
+
+			const sg::AABB &mesh_bounds = mesh->get_bounds();
+
+			sg::AABB world_bounds{mesh_bounds.get_min(), mesh_bounds.get_max()};
+			world_bounds.transform(node_transform);
+
+			float distance = glm::length(glm::vec3(camera_transform[3]) - world_bounds.get_center());
+
+			for (auto &sub_mesh : mesh->get_submeshes())
+			{
+				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend)
+				{
+					transparent_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+				}
+				else
+				{
+					opaque_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+				}
+			}
+		}
+	}
+}
+
+void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
+{
+	VulkanSample::request_gpu_features(gpu);
+}
+
+void forward_plus::resize(const uint32_t width, const uint32_t height)
+{
+	VulkanSample::resize(width, height);
+}
+
+void forward_plus::prepare_pipelines()
+{
+	auto &   extent2d     = get_render_context().get_surface_extent();
+	uint32_t windowWidth  = extent2d.width;
+	uint32_t windowHeight = extent2d.height;
+
+	Device &refDevice = *device.get();
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
 	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
@@ -87,28 +144,70 @@ bool forward_plus::prepare(Platform &platform)
 			ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
 			VkPipelineCache pipelineCache{};
 			PipelineLayout  layout(refDevice, depthProgram->GetShaderModules());
-			PipelineState   depthOnlyPipelineState{};
+			PipelineState   depthOnlyPipelineState;
 			depthOnlyPipelineState.set_pipeline_layout(layout);
 			depthOnlyPipelineState.set_render_pass(*opaquePass.renderPass.get());
 			depthOnlyPipelineState.set_vertex_input_state(defaultVertexInput);
 			depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
 			depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
-			auto pbo = std::make_unique<GraphicsPipeline>(refDevice, pipelineCache, depthOnlyPipelineState);
-			opaquePass.pipelines.insert(std::move(std::make_pair((uint32_t) DepthPrePassOrder, std::move(pbo))));
+			opaquePass.pipelines.emplace(std::make_pair((uint32_t) DepthPrePassOrder, std::move(depthOnlyPipelineState)));
 		}
 	}
-	return true;
 }
 
-void forward_plus::update(float delta_time)
+void forward_plus::prepare_resources()
 {
-	camera.update(delta_time);
-	update_scene(delta_time);
-	//update_gui(delta_time);
+	Device &refDevice = *device.get();
+	{
+		// Load Shader
+		// TODO : shader variant
+		ShaderVariant            emptyVariant{};
+		std::vector<std::string> shaderSourceFiles{"forward_plus/depth_only"};
+		std::vector<std::string> computeSourceFiles{};
+		// assmue shader source contain vertex and fragment
+		for (int i = 0; i < shaderSourceFiles.size(); ++i)
+		{
+			ShaderSource vsSource(shaderSourceFiles[i] + ".vert");
+			ShaderSource fsSource(shaderSourceFiles[i] + ".frag");
+			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, vsSource, k_shaderEntry, emptyVariant);
+			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, k_shaderEntry, emptyVariant);
 
-	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> opaque_nodes;
-	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> transparent_nodes;
-	get_sorted_nodes(opaque_nodes, transparent_nodes);
+			std::initializer_list<std::shared_ptr<ShaderModule>> initList{std::move(shaderVS), std::move(shaderFS)};
+
+			auto program = std::make_shared<ShaderProgram>(std::move(initList));
+			ShaderProgram::AddShaderProgram(shaderSourceFiles[i], std::move(program));
+		}
+
+		for (int i = 0; i < computeSourceFiles.size(); i++)
+		{
+			ShaderSource source(computeSourceFiles[i] + ".comp");
+			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_shaderEntry, emptyVariant);
+			auto         program  = std::make_shared<ShaderProgram>(std::move(shaderCS));
+			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
+		}
+	}
+
+	{
+		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
+		load_scene("scenes/sponza/Sponza01.gltf");
+	}
+}
+
+void forward_plus::prepare_camera()
+{
+	VkExtent2D extent = get_render_context().get_surface_extent();
+	camera.type       = vkb::CameraType::LookAt;
+	camera.set_position(glm::vec3(0.0f, 0.0f, -4.0f));
+	camera.set_rotation(glm::vec3(0.0f, 180.0f, 0.0f));
+	// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
+	camera.set_perspective(60.0f, (float) extent.width / (float) extent.height, 1000.0f, 0.1f);
+}
+
+void forward_plus::render(float delta_time)
+{
+	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> opaqueNodes;
+	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> transparentNodes;
+	get_sorted_nodes(opaqueNodes, transparentNodes);
 
 	// reverse z
 	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(1.0, 0)};
@@ -122,10 +221,11 @@ void forward_plus::update(float delta_time)
 	// Opaque
 	{
 		commandBuffer.begin_render_pass(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass(), opaquePass.GetFrameBuffer(), clearValue);
-		// TODO : bind pipeline and descripotr set
-		// draw to render target and presen to screen
-		for (auto node_it = opaque_nodes.begin(); node_it != opaque_nodes.end(); node_it++)
+		// update and bind buffer
+		bind_pipeline_state(commandBuffer, opaquePass.pipelines.at(DepthPrePassOrder));
+		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
 		{
+			update_global_uniform_buffers(commandBuffer, iter->second.first);
 		}
 
 		commandBuffer.end_render_pass();
@@ -134,46 +234,39 @@ void forward_plus::update(float delta_time)
 	context.submit(commandBuffer);
 }
 
-void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)
+void forward_plus::update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node)
 {
-	auto camera_transform = camera.matrices.view;
-	auto meshes           = scene->get_components<sg::Mesh>();
-	for (auto &mesh : meshes)
-	{
-		for (auto &node : mesh->get_nodes())
+	auto &render_frame = get_render_context().get_active_frame();
+	auto  allocation   = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(GlobalUniform), 0);
+	auto &transform    = node->get_transform();
+
+	GlobalUniform globalUniform;
+	globalUniform.model           = transform.get_world_matrix();
+	globalUniform.view_project    = vkb::vulkan_style_projection(camera.matrices.perspective) * camera.matrices.view;
+	globalUniform.camera_position = camera.position;
+	allocation.update(globalUniform);
+	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 1, 0);
+}
+
+void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline)
+{
+	commandBuffer.set_color_blend_state(pipeline.get_color_blend_state());
+	commandBuffer.set_depth_stencil_state(pipeline.get_depth_stencil_state());
+	commandBuffer.set_input_assembly_state(pipeline.get_input_assembly_state());
+	commandBuffer.set_rasterization_state(pipeline.get_rasterization_state());
+	commandBuffer.set_viewport_state(pipeline.get_viewport_state());
+}
+
+void forward_plus::bind_pipeline_resources(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline)
+{
+	commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(pipeline.get_pipeline_layout()));
+	auto &constantState = pipeline.get_specialization_constant_state().get_specialization_constant_state();
+	for
+		each(auto iter in constantState)
 		{
-			auto node_transform = node->get_transform().get_world_matrix();
-
-			const sg::AABB &mesh_bounds = mesh->get_bounds();
-
-			sg::AABB world_bounds{mesh_bounds.get_min(), mesh_bounds.get_max()};
-			world_bounds.transform(node_transform);
-
-			float distance = glm::length(glm::vec3(camera_transform[3]) - world_bounds.get_center());
-
-			for (auto &sub_mesh : mesh->get_submeshes())
-			{
-				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend)
-				{
-					transparent_nodes.emplace(distance, std::make_pair(node, sub_mesh));
-				}
-				else
-				{
-					opaque_nodes.emplace(distance, std::make_pair(node, sub_mesh));
-				}
-			}
+			commandBuffer.set_specialization_constant(iter.first, iter.second);
 		}
-	}
-}
-
-void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
-{
-	VulkanSample::request_gpu_features(gpu);
-}
-
-void forward_plus::resize(const uint32_t width, const uint32_t height)
-{
-	VulkanSample::resize(width, height);
+	// TODO : bind image, bind material
 }
 
 void forward_plus::input_event(const vkb::InputEvent &input_event)
@@ -367,70 +460,6 @@ void forward_plus::handle_mouse_move(int32_t x, int32_t y)
 		viewUpdated = true;
 	}
 	mousePos = glm::vec2((float) x, (float) y);
-}
-
-void forward_plus::prepare_resources()
-{
-	Device &refDevice = *device.get();
-	{
-		// Load Shader
-		// TODO : shader variant
-		ShaderVariant            emptyVariant{};
-		std::vector<std::string> shaderSourceFiles{"forward_plus/depth_only"};
-		std::vector<std::string> computeSourceFiles{};
-		// assmue shader source contain vertex and fragment
-		for (int i = 0; i < shaderSourceFiles.size(); ++i)
-		{
-			ShaderSource vsSource(shaderSourceFiles[i] + ".vert");
-			ShaderSource fsSource(shaderSourceFiles[i] + ".frag");
-			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, vsSource, k_shaderEntry, emptyVariant);
-			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, k_shaderEntry, emptyVariant);
-
-			std::initializer_list<std::shared_ptr<ShaderModule>> initList{std::move(shaderVS), std::move(shaderFS)};
-
-			auto program = std::make_shared<ShaderProgram>(std::move(initList));
-			ShaderProgram::AddShaderProgram(shaderSourceFiles[i], std::move(program));
-		}
-
-		for (int i = 0; i < computeSourceFiles.size(); i++)
-		{
-			ShaderSource source(computeSourceFiles[i] + ".comp");
-			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_shaderEntry, emptyVariant);
-			auto         program  = std::make_shared<ShaderProgram>(std::move(shaderCS));
-			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
-		}
-	}
-
-	{
-		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
-		load_scene("scenes/sponza/Sponza01.gltf");
-	}
-}
-
-void forward_plus::prepare_camera()
-{
-	VkExtent2D extent = get_render_context().get_surface_extent();
-	camera.type       = vkb::CameraType::LookAt;
-	camera.set_position(glm::vec3(0.0f, 0.0f, -4.0f));
-	camera.set_rotation(glm::vec3(0.0f, 180.0f, 0.0f));
-	// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
-	camera.set_perspective(60.0f, (float) extent.width / (float) extent.height, 1000.0f, 0.1f);
-}
-
-void forward_plus::render(float delta_time)
-{
-}
-
-void forward_plus::prepare_pipelines()
-{
-}
-
-void forward_plus::prepare_uniform_buffers()
-{
-}
-
-void forward_plus::update_uniform_buffers()
-{
 }
 
 std::unique_ptr<vkb::Application> create_forward_plus()
