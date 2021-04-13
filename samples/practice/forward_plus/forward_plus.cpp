@@ -3,6 +3,7 @@
 #include "gltf_loader.h"
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/mesh.h"
+#include "scene_graph/components/pbr_material.h"
 #include "scene_graph/components/sub_mesh.h"
 #include "scene_graph/node.h"
 
@@ -32,6 +33,14 @@ bool forward_plus::prepare(Platform &platform)
 	prepare_pipelines();
 
 	return true;
+}
+
+void forward_plus::prepare_render_context()
+{
+	// so we can just copy offscreen image to swap chain image
+	auto &properties = render_context->get_swapchain().get_properties();
+	properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	render_context->prepare();
 }
 
 void forward_plus::update(float delta_time)
@@ -77,6 +86,8 @@ void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, s
 void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
 {
 	VulkanSample::request_gpu_features(gpu);
+	supportBlit = (gpu.get_format_properties(VK_FORMAT_R8G8B8A8_SRGB).optimalTilingFeatures | (VK_FORMAT_FEATURE_BLIT_SRC_BIT & VK_FORMAT_FEATURE_BLIT_DST_BIT)) == (VK_FORMAT_FEATURE_BLIT_SRC_BIT & VK_FORMAT_FEATURE_BLIT_DST_BIT);
+	assert(supportBlit);
 }
 
 void forward_plus::resize(const uint32_t width, const uint32_t height)
@@ -94,7 +105,7 @@ void forward_plus::prepare_pipelines()
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
 	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
-	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	// Create Render Target
 	std::vector<Image> offScreenImages;
@@ -102,19 +113,9 @@ void forward_plus::prepare_pipelines()
 	offScreenImages.push_back(std::move(depthImage));
 	std::shared_ptr<RenderTarget> renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
 
-	// Public pipeline state
-	// gltf_loader::load_scene seperate vertex data in its own buffer
-	// TODO : separate skinning mesh and static mesh
-	VertexInputState defaultVertexInput;
-	defaultVertexInput.bindings.emplace_back(VkVertexInputBindingDescription{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX});
-	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});        //Position
-	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});        // Normal
-	defaultVertexInput.attributes.emplace_back(VkVertexInputAttributeDescription{2, 0, VK_FORMAT_R32G32_SFLOAT, 0});           // UV
-
 	DepthStencilState defaultDepthState;        // depth test/write
-
-	ColorBlendState defaultColorState;
-	ColorBlendState depthOnlyColorState;
+	ColorBlendState   defaultColorState;
+	ColorBlendState   depthOnlyColorState;
 	{
 		ColorBlendAttachmentState defaultAttaState;
 		//ColorBlendAttachmentState blendAttaState;
@@ -136,20 +137,18 @@ void forward_plus::prepare_pipelines()
 		std::vector<SubpassInfo> subPassInfos;
 		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 		opaquePass.renderTarget = renderTarget;
-		opaquePass.renderPass   = std::make_unique<RenderPass>(refDevice, renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
-		opaquePass.frameBuffer  = std::make_unique<Framebuffer>(refDevice, *renderTarget.get(), *opaquePass.renderPass.get());
+		opaquePass.renderPass   = &refDevice.get_resource_cache().request_render_pass(renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
+		opaquePass.frameBuffer  = &refDevice.get_resource_cache().request_framebuffer(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass());
 
 		{
 			// Dpeth Pass
-			ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
-			VkPipelineCache pipelineCache{};
-			PipelineLayout  layout(refDevice, depthProgram->GetShaderModules());
-			PipelineState   depthOnlyPipelineState;
+			ShaderProgram *depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
+			PipelineLayout layout(refDevice, depthProgram->GetShaderModules());
+			PipelineState  depthOnlyPipelineState;
 			depthOnlyPipelineState.set_pipeline_layout(layout);
-			depthOnlyPipelineState.set_render_pass(*opaquePass.renderPass.get());
-			depthOnlyPipelineState.set_vertex_input_state(defaultVertexInput);
+			depthOnlyPipelineState.set_render_pass(opaquePass.GetRenderPass());
 			depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
-			depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
+			depthOnlyPipelineState.set_color_blend_state(defaultColorState);
 			opaquePass.pipelines.emplace(std::make_pair((uint32_t) DepthPrePassOrder, std::move(depthOnlyPipelineState)));
 		}
 	}
@@ -158,6 +157,12 @@ void forward_plus::prepare_pipelines()
 void forward_plus::prepare_resources()
 {
 	Device &refDevice = *device.get();
+
+	{
+		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
+		load_scene("scenes/sponza/Sponza01.gltf");
+	}
+
 	{
 		// Load Shader
 		// TODO : shader variant
@@ -169,10 +174,10 @@ void forward_plus::prepare_resources()
 		{
 			ShaderSource vsSource(shaderSourceFiles[i] + ".vert");
 			ShaderSource fsSource(shaderSourceFiles[i] + ".frag");
-			auto         shaderVS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_VERTEX_BIT, vsSource, k_shaderEntry, emptyVariant);
-			auto         shaderFS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, k_shaderEntry, emptyVariant);
+			auto &       shaderVS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource, emptyVariant);
+			auto &       shaderFS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, emptyVariant);
 
-			std::initializer_list<std::shared_ptr<ShaderModule>> initList{std::move(shaderVS), std::move(shaderFS)};
+			std::initializer_list<ShaderModule *> initList{&shaderVS, &shaderFS};
 
 			auto program = std::make_shared<ShaderProgram>(std::move(initList));
 			ShaderProgram::AddShaderProgram(shaderSourceFiles[i], std::move(program));
@@ -181,15 +186,10 @@ void forward_plus::prepare_resources()
 		for (int i = 0; i < computeSourceFiles.size(); i++)
 		{
 			ShaderSource source(computeSourceFiles[i] + ".comp");
-			auto         shaderCS = std::make_shared<ShaderModule>(refDevice, VK_SHADER_STAGE_COMPUTE_BIT, source, k_shaderEntry, emptyVariant);
-			auto         program  = std::make_shared<ShaderProgram>(std::move(shaderCS));
+			auto &       shaderCS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_COMPUTE_BIT, source, emptyVariant);
+			auto         program  = std::make_shared<ShaderProgram>(&shaderCS);
 			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
 		}
-	}
-
-	{
-		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
-		load_scene("scenes/sponza/Sponza01.gltf");
 	}
 }
 
@@ -225,11 +225,24 @@ void forward_plus::render(float delta_time)
 		bind_pipeline_state(commandBuffer, opaquePass.pipelines.at(DepthPrePassOrder));
 		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
 		{
-			update_global_uniform_buffers(commandBuffer, iter->second.first);
+			auto node    = iter->second.first;
+			auto submesh = iter->second.second;
+			update_global_uniform_buffers(commandBuffer, node);
+			bind_descriptor(commandBuffer, submesh, opaquePass.pipelines.at(DepthPrePassOrder));
+			if (bind_vertex_input(commandBuffer, submesh, opaquePass.pipelines.at(DepthPrePassOrder)))
+			{
+				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
+			}
+			else
+			{
+				commandBuffer.draw(submesh->vertices_count, 1, 0, 0);
+			}
 		}
 
 		commandBuffer.end_render_pass();
 	}
+
+	blit_and_present(commandBuffer);
 	commandBuffer.end();
 	context.submit(commandBuffer);
 }
@@ -245,7 +258,7 @@ void forward_plus::update_global_uniform_buffers(vkb::CommandBuffer &commandBuff
 	globalUniform.view_project    = vkb::vulkan_style_projection(camera.matrices.perspective) * camera.matrices.view;
 	globalUniform.camera_position = camera.position;
 	allocation.update(globalUniform);
-	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 1, 0);
+	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
 }
 
 void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline)
@@ -255,18 +268,166 @@ void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::P
 	commandBuffer.set_input_assembly_state(pipeline.get_input_assembly_state());
 	commandBuffer.set_rasterization_state(pipeline.get_rasterization_state());
 	commandBuffer.set_viewport_state(pipeline.get_viewport_state());
+	commandBuffer.set_multisample_state(pipeline.get_multisample_state());
 }
 
-void forward_plus::bind_pipeline_resources(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline)
+void forward_plus::bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline, bool bindMaterial)
 {
-	commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(pipeline.get_pipeline_layout()));
+	const PipelineLayout &layout = pipeline.get_pipeline_layout();
+	commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(layout));
 	auto &constantState = pipeline.get_specialization_constant_state().get_specialization_constant_state();
-	for
-		each(auto iter in constantState)
+	for (auto iter = constantState.begin(); iter != constantState.end(); ++iter)
+	{
+		commandBuffer.set_specialization_constant(iter->first, iter->second);
+	}
+
+	if (bindMaterial)
+	{
+		DescriptorSetLayout &descriptorSetLayout = layout.get_descriptor_set_layout(0);
+
+		for (auto &texture : submesh->get_material()->textures)
 		{
-			commandBuffer.set_specialization_constant(iter.first, iter.second);
+			auto layoutBinding = descriptorSetLayout.get_layout_binding(texture.first);
+			if (layoutBinding != nullptr)
+			{
+				commandBuffer.bind_image(texture.second->get_image()->get_vk_image_view(),
+				                         texture.second->get_sampler()->vk_sampler,
+				                         0, layoutBinding->binding, 0);
+			}
 		}
-	// TODO : bind image, bind material
+
+		struct PBRMaterialUniform
+		{
+			glm::vec4 base_color_factor;
+
+			float metallic_factor;
+
+			float roughness_factor;
+		};
+		auto               pbr_material = dynamic_cast<const sg::PBRMaterial *>(submesh->get_material());
+		PBRMaterialUniform pbr_material_uniform{};
+		pbr_material_uniform.base_color_factor = pbr_material->base_color_factor;
+		pbr_material_uniform.metallic_factor   = pbr_material->metallic_factor;
+		pbr_material_uniform.roughness_factor  = pbr_material->roughness_factor;
+
+		auto data = to_bytes(pbr_material_uniform);
+
+		if (!data.empty())
+		{
+			commandBuffer.push_constants(data);
+		}
+	}
+}
+
+bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline)
+{
+	auto &pipelineLayout         = pipeline.get_pipeline_layout();
+	auto  vertex_input_resources = pipelineLayout.get_resources(ShaderResourceType::Input, VK_SHADER_STAGE_VERTEX_BIT);
+
+	VertexInputState vertex_input_state;
+
+	for (auto &input_resource : vertex_input_resources)
+	{
+		sg::VertexAttribute attribute;
+
+		if (!submesh->get_attribute(input_resource.name, attribute))
+		{
+			continue;
+		}
+
+		VkVertexInputAttributeDescription vertex_attribute{};
+		vertex_attribute.binding  = input_resource.location;
+		vertex_attribute.format   = attribute.format;
+		vertex_attribute.location = input_resource.location;
+		vertex_attribute.offset   = attribute.offset;
+
+		vertex_input_state.attributes.push_back(vertex_attribute);
+
+		VkVertexInputBindingDescription vertex_binding{};
+		vertex_binding.binding = input_resource.location;
+		vertex_binding.stride  = attribute.stride;
+
+		vertex_input_state.bindings.push_back(vertex_binding);
+	}
+
+	commandBuffer.set_vertex_input_state(vertex_input_state);
+
+	// Find submesh vertex buffers matching the shader input attribute names
+	for (auto &input_resource : vertex_input_resources)
+	{
+		const auto &buffer_iter = submesh->vertex_buffers.find(input_resource.name);
+
+		if (buffer_iter != submesh->vertex_buffers.end())
+		{
+			std::vector<std::reference_wrapper<const core::Buffer>> buffers;
+			buffers.emplace_back(std::ref(buffer_iter->second));
+
+			// Bind vertex buffers only for the attribute locations defined
+			commandBuffer.bind_vertex_buffers(input_resource.location, std::move(buffers), {0});
+		}
+	}
+
+	// Draw submesh indexed if indices exists
+	if (submesh->vertex_indices != 0)
+	{
+		// Bind index buffer of submesh
+		commandBuffer.bind_index_buffer(*submesh->index_buffer, submesh->index_offset, submesh->index_type);
+		return true;
+	}
+	return false;
+}
+
+void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer)
+{
+	auto &colorImageView = opaquePass.GetRenderTarget().get_views()[0];
+	auto &swapChainView  = render_context->get_active_frame().get_render_target().get_views()[0];
+
+	ImageMemoryBarrier barrier{};
+	barrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	barrier.dst_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
+	barrier.old_layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	barrier.new_layout      = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	commandBuffer.image_memory_barrier(colorImageView, barrier);
+
+	barrier.src_stage_mask  = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	barrier.src_access_mask = 0;
+	barrier.dst_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.old_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
+	barrier.new_layout      = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	commandBuffer.image_memory_barrier(swapChainView, barrier);
+
+	VkExtent3D  colorImageExtent = colorImageView.get_image().get_extent();
+	VkExtent3D  swapChainExtent  = swapChainView.get_image().get_extent();
+	VkImageBlit blit{};
+	blit.srcOffsets[0]             = VkOffset3D{0, 0, 0};
+	blit.srcOffsets[1]             = VkOffset3D{(int32_t) colorImageExtent.width, (int32_t) colorImageExtent.height, 0};
+	blit.dstOffsets[0]             = VkOffset3D{0, 0, 0};
+	blit.dstOffsets[1]             = VkOffset3D{(int32_t) swapChainExtent.width, (int32_t) swapChainExtent.height, 0};
+	blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	blit.srcSubresource.layerCount = 1;
+	blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	blit.dstSubresource.layerCount = 1;
+
+	commandBuffer.blit_image(colorImageView.get_image(), swapChainView.get_image(), {blit});
+
+	barrier.src_stage_mask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	barrier.src_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
+	barrier.dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	barrier.old_layout      = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	barrier.new_layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	commandBuffer.image_memory_barrier(colorImageView, barrier);
+
+	barrier.src_stage_mask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+	barrier.src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.dst_access_mask = 0;
+	barrier.old_layout      = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barrier.new_layout      = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	commandBuffer.image_memory_barrier(swapChainView, barrier);
 }
 
 void forward_plus::input_event(const vkb::InputEvent &input_event)
@@ -464,5 +625,5 @@ void forward_plus::handle_mouse_move(int32_t x, int32_t y)
 
 std::unique_ptr<vkb::Application> create_forward_plus()
 {
-	return std::unique_ptr<forward_plus>();
+	return std::make_unique<forward_plus>();
 }

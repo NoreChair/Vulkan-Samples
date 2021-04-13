@@ -52,8 +52,8 @@ class forward_plus : public vkb::VulkanSample
 	struct RenderPassEntry
 	{
 		std::shared_ptr<vkb::RenderTarget>   renderTarget;
-		std::unique_ptr<vkb::Framebuffer>    frameBuffer;
-		std::unique_ptr<vkb::RenderPass>     renderPass;
+		vkb::Framebuffer *                   frameBuffer;
+		vkb::RenderPass *                    renderPass;
 		std::map<size_t, vkb::PipelineState> pipelines;
 
 		inline vkb::RenderTarget &GetRenderTarget()
@@ -63,24 +63,24 @@ class forward_plus : public vkb::VulkanSample
 
 		inline vkb::Framebuffer &GetFrameBuffer()
 		{
-			return *frameBuffer.get();
+			return *frameBuffer;
 		}
 
 		inline vkb::RenderPass &GetRenderPass()
 		{
-			return *renderPass.get();
+			return *renderPass;
 		}
 	};
 
 	struct ShaderProgram
 	{
-		ShaderProgram(std::shared_ptr<vkb::ShaderModule> &&shader)
+		ShaderProgram(vkb::ShaderModule *shader)
 		{
 			shaderModules.push_back(shader);
 			programStageFlag = shader->get_stage();
 		}
 
-		ShaderProgram(std::initializer_list<std::shared_ptr<vkb::ShaderModule>> &&params)
+		ShaderProgram(std::initializer_list<vkb::ShaderModule *> &&params)
 		{
 			programStageFlag = (VkShaderStageFlagBits) 0;
 			for (auto ptr = params.begin(); ptr != params.end(); ++ptr)
@@ -90,11 +90,9 @@ class forward_plus : public vkb::VulkanSample
 			}
 		}
 
-		std::vector<vkb::ShaderModule *> GetShaderModules()
+		std::vector<vkb::ShaderModule *> &GetShaderModules()
 		{
-			std::vector<vkb::ShaderModule *> modules(shaderModules.size());
-			std::transform(shaderModules.begin(), shaderModules.end(), modules.begin(), [](const std::shared_ptr<vkb::ShaderModule> &item) { return item.get(); });
-			return modules;
+			return shaderModules;
 		}
 
 		bool IsGraphicProgram()
@@ -153,7 +151,7 @@ class forward_plus : public vkb::VulkanSample
 	  private:
 		static std::unordered_map<size_t, std::shared_ptr<ShaderProgram>> shaderProgramPool;
 		VkShaderStageFlagBits                                             programStageFlag;
-		std::vector<std::shared_ptr<vkb::ShaderModule>>                   shaderModules;
+		std::vector<vkb::ShaderModule *>                                  shaderModules;
 	};
 
   public:
@@ -162,6 +160,7 @@ class forward_plus : public vkb::VulkanSample
 
   private:
 	virtual bool prepare(vkb::Platform &platform) override;
+	virtual void prepare_render_context() override;
 	virtual void request_gpu_features(vkb::PhysicalDevice &gpu) override;
 	virtual void resize(const uint32_t width, const uint32_t height) override;
 	virtual void update(float delta_time) override;
@@ -174,13 +173,14 @@ class forward_plus : public vkb::VulkanSample
 	void render(float delta_time);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
-	void bind_pipeline_resources(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline);
+	void bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline, bool bindMaterial = false);
+	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline);
+	void blit_and_present(vkb::CommandBuffer &commandBuffer);
 	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
 
   private:
-	const std::string k_title       = "Vulkan Example";
-	const std::string k_name        = "Forward Plus";
-	const std::string k_shaderEntry = "main";
+	const std::string k_title = "Vulkan Example";
+	const std::string k_name  = "Forward Plus";
 
 	/*                            Camera                           */
 	float       zoom        = 0;
@@ -204,6 +204,7 @@ class forward_plus : public vkb::VulkanSample
 	TouchPos    touchPos;
 
 	/*                            Rendering                        */
+	bool supportBlit = false;
 	RenderPassEntry opaquePass{};
 };
 
