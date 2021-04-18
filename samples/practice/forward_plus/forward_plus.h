@@ -3,7 +3,7 @@
  */
 #pragma once
 
-#include "camera.h"
+#include "scene_graph/components/camera.h"
 #include "platform/platform.h"
 #include "vulkan_sample.h"
 #include <initializer_list>
@@ -114,7 +114,7 @@ class forward_plus : public vkb::VulkanSample
 
 		static void AddShaderProgram(size_t uid, std::shared_ptr<ShaderProgram> &&program)
 		{
-			DEBUG_ASSERT(shaderProgramPool.find(uid) != shaderProgramPool.end(), "Shader program uid collision");
+			DEBUG_ASSERT(shaderProgramPool.find(uid) == shaderProgramPool.end(), "Shader program uid collision");
 			shaderProgramPool.emplace(uid, std::move(program));
 		}
 
@@ -159,14 +159,14 @@ class forward_plus : public vkb::VulkanSample
 	~forward_plus();
 
   private:
-	virtual bool prepare(vkb::Platform &platform) override;
-	virtual void prepare_render_context() override;
-	virtual void request_gpu_features(vkb::PhysicalDevice &gpu) override;
-	virtual void resize(const uint32_t width, const uint32_t height) override;
-	virtual void update(float delta_time) override;
-	virtual void input_event(const vkb::InputEvent &input_event) override;
+	virtual bool                            prepare(vkb::Platform &platform) override;
+	virtual void                            prepare_render_context() override;
+	virtual const std::vector<const char *> get_validation_layers() override;
+	virtual void                            request_gpu_features(vkb::PhysicalDevice &gpu) override;
+	virtual void                            resize(const uint32_t width, const uint32_t height) override;
+	virtual void                            update(float delta_time) override;
+	virtual void                            input_event(const vkb::InputEvent &input_event) override;
 
-	void handle_mouse_move(int32_t x, int32_t y);
 	void prepare_resources();
 	void prepare_camera();
 	void prepare_pipelines();
@@ -182,29 +182,10 @@ class forward_plus : public vkb::VulkanSample
 	const std::string k_title = "Vulkan Example";
 	const std::string k_name  = "Forward Plus";
 
-	/*                            Camera                           */
-	float       zoom        = 0;
-	bool        viewUpdated = false;
-	glm::vec3   rotation    = glm::vec3();
-	glm::vec3   cameraPos   = glm::vec3();
-	vkb::Camera camera;
-
-	/*                            Input                           */
-	// true if application has focused, false if moved to background
-	bool focused   = false;
-	bool touchDown = false;
-	// Use to adjust mouse rotation speed
-	float rotationSpeed = 1.0f;
-	// Use to adjust mouse zoom speed
-	float       zoomSpeed   = 1.0f;
-	double      touchTimer  = 0.0;
-	int64_t     lastTapTime = 0;
-	glm::vec2   mousePos    = glm::vec2();
-	MouseButton mouseButtons;
-	TouchPos    touchPos;
+	vkb::sg::Camera *camera;
 
 	/*                            Rendering                        */
-	bool supportBlit = false;
+	bool            supportBlit = false;
 	RenderPassEntry opaquePass{};
 };
 

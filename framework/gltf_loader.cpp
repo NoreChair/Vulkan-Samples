@@ -636,7 +636,7 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 				core::Buffer buffer{device,
 				                    vertex_data.size(),
 				                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				                    VMA_MEMORY_USAGE_GPU_ONLY};
+				                    VMA_MEMORY_USAGE_CPU_TO_GPU};
 				buffer.update(vertex_data);
 
 				submesh->vertex_buffers.insert(std::make_pair(attrib_name, std::move(buffer)));
@@ -676,7 +676,7 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 				submesh->index_buffer = std::make_unique<core::Buffer>(device,
 				                                                       index_data.size(),
 				                                                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				                                                       VMA_MEMORY_USAGE_GPU_ONLY);
+				                                                       VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 				submesh->index_buffer->update(index_data);
 			}

@@ -96,7 +96,7 @@ BufferBlock &BufferPool::request_buffer_block(const VkDeviceSize minimum_size)
 {
 	// Find the first block in the range of the inactive blocks
 	// which can fit the minimum size
-#define MEMORY_COMPACT
+//#define MEMORY_COMPACT
 #if defined(MEMORY_COMPACT)
 	auto it = std::upper_bound(buffer_blocks.begin() + active_buffer_block_count, buffer_blocks.end(), minimum_size,
 	                           [](const VkDeviceSize &a, const std::unique_ptr<BufferBlock> &b) -> bool { return a <= b->get_spare_size(); });

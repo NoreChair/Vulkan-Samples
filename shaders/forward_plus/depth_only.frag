@@ -11,5 +11,6 @@ layout(set = 0, binding = 0) uniform GlobalUniform{
 
 void main(){
     float depth = 1.0 / gl_FragCoord.w;
+    depth /= 4000.0;
     o_color = vec4(depth, depth, depth, 1.0);
 }
