@@ -1,0 +1,15 @@
+#version 320 es
+precision highp float;
+
+layout(binding = 0) uniform cBuffer{
+    float zMagic;
+};
+layout(location = 0, binding = 0) uniform highp sampler2D sceneDepth;
+layout(r32f, binding = 0) writeonly uniform highp image2D linearDepth;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+void main(){
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    vec4 depth = texelFetch(sceneDepth, id, 0);
+    imageStore(linearDepth, id, 1.0/(zMagic * depth + 1.0));
+}

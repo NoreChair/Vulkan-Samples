@@ -110,14 +110,10 @@ void forward_plus::prepare_pipelines()
 	Device &refDevice = *device.get();
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
-	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
-	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-
-	// Create Render Target
-	std::vector<Image> offScreenImages;
-	offScreenImages.push_back(std::move(colorImage));
-	offScreenImages.push_back(std::move(depthImage));
-	std::shared_ptr<RenderTarget> renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
+	depthImage  = std::make_shared<Image>(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
+	colorImage  = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	linearDepth = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	lightBuffer = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	DepthStencilState defaultDepthState;        // depth test/write
 	ColorBlendState   defaultColorState;
@@ -136,45 +132,83 @@ void forward_plus::prepare_pipelines()
 	}
 
 	{
-		// Opaque
+		// Dpeth Pass
+		std::vector<Image> offScreenImages;
+		offScreenImages.push_back(std::move(*depthImage));
+
 		std::vector<LoadStoreInfo> loadStoreInfos;
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+		depthPrePass.renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
+		depthPrePass.renderPass   = &refDevice.get_resource_cache().request_render_pass(depthPrePass.renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
+		depthPrePass.frameBuffer  = &refDevice.get_resource_cache().request_framebuffer(depthPrePass.GetRenderTarget(), depthPrePass.GetRenderPass());
+
+		ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
+		PipelineLayout &layout       = refDevice.get_resource_cache().request_pipeline_layout(depthProgram->GetShaderModules());
+
+		PipelineState depthOnlyPipelineState;
+		depthOnlyPipelineState.set_pipeline_layout(layout);
+		depthOnlyPipelineState.set_render_pass(depthPrePass.GetRenderPass());
+		depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
+		depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
+		depthPrePass.pipelines.emplace(std::make_pair((uint32_t) DepthPrePassOrder, std::move(depthOnlyPipelineState)));
+	}
+
+	{
+		// Linear depth
+		ShaderProgram * linearDepthProgram = ShaderProgram::Find(std::string("forward_plus/liner_depth"));
+		PipelineLayout &linearDepthLayout  = refDevice.get_resource_cache().request_pipeline_layout(linearDepthProgram->GetShaderModules());
+		PipelineState   linearDpethState;
+		linearDpethState.set_pipeline_layout(linearDepthLayout);
+		refDevice.get_resource_cache().request_compute_pipeline(linearDpethState);
+
+		ShaderProgram * lightGridProgram = ShaderProgram::Find(std::string("forward_plus/light_grid"));
+		PipelineLayout &lightGridLayout  = refDevice.get_resource_cache().request_pipeline_layout(lightGridProgram->GetShaderModules());
+		PipelineState   lightGridState;
+		lightGridState.set_pipeline_layout(lightGridLayout);
+		refDevice.get_resource_cache().request_compute_pipeline(lightGridState);
+	}
+
+	// opaque render
+	{
+		std::vector<Image> offScreenImages;
+		offScreenImages.push_back(std::move(*colorImage));
+		offScreenImages.push_back(std::move(*depthImage));
+
+		std::vector<LoadStoreInfo> loadStoreInfos;
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+
 		std::vector<SubpassInfo> subPassInfos;
 		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-		opaquePass.renderTarget = renderTarget;
-		opaquePass.renderPass   = &refDevice.get_resource_cache().request_render_pass(renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
+
+		opaquePass.renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
+		opaquePass.renderPass   = &refDevice.get_resource_cache().request_render_pass(opaquePass.renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
 		opaquePass.frameBuffer  = &refDevice.get_resource_cache().request_framebuffer(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass());
 
-		{
-			// Dpeth Pass
-			ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
-			PipelineLayout &layout       = refDevice.get_resource_cache().request_pipeline_layout(depthProgram->GetShaderModules());
-			PipelineState   depthOnlyPipelineState;
-			depthOnlyPipelineState.set_pipeline_layout(layout);
-			depthOnlyPipelineState.set_render_pass(opaquePass.GetRenderPass());
-			depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
-			depthOnlyPipelineState.set_color_blend_state(defaultColorState);
-			opaquePass.pipelines.emplace(std::make_pair((uint32_t) DepthPrePassOrder, std::move(depthOnlyPipelineState)));
-		}
+		ShaderProgram * pbrProgram = ShaderProgram::Find(std::string("forward_plus/pbr_base"));
+		PipelineLayout &layout     = refDevice.get_resource_cache().request_pipeline_layout(pbrProgram->GetShaderModules());
+		PipelineState   opaqueRenderState;
+		opaqueRenderState.set_pipeline_layout(layout);
+		opaqueRenderState.set_render_pass(opaquePass.GetRenderPass());
+		opaqueRenderState.set_depth_stencil_state(defaultDepthState);
+		opaqueRenderState.set_color_blend_state(defaultColorState);
+		opaquePass.pipelines.emplace(std::make_pair((uint32_t) OpaquePassOrder, std::move(opaqueRenderState)));
 	}
 }
 
 void forward_plus::prepare_resources()
 {
 	Device &refDevice = *device.get();
-
-	{
-		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
-		load_scene("scenes/sponza/Sponza01.gltf");
-	}
-
 	{
 		// Load Shader
 		// TODO : shader variant
 		ShaderVariant            emptyVariant{};
 		std::vector<std::string> shaderSourceFiles{"forward_plus/depth_only"};
-		std::vector<std::string> computeSourceFiles{};
+		std::vector<std::string> computeSourceFiles{"forward_plus/linear_depth"};
 		// assmue shader source contain vertex and fragment
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
 		{
@@ -197,12 +231,17 @@ void forward_plus::prepare_resources()
 			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
 		}
 	}
+
+	{
+		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
+		load_scene("scenes/sponza/Sponza01.gltf");
+	}
 }
 
 void forward_plus::prepare_camera()
 {
-	auto &     camera_node = vkb::add_free_camera(*scene, "main_camera", get_render_context().get_surface_extent());
-	camera                 = &camera_node.get_component<vkb::sg::Camera>();
+	auto &camera_node = vkb::add_free_camera(*scene, "main_camera", get_render_context().get_surface_extent());
+	camera            = &camera_node.get_component<vkb::sg::Camera>();
 }
 
 void forward_plus::render(float delta_time)
@@ -220,18 +259,18 @@ void forward_plus::render(float delta_time)
 	commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 	set_viewport_and_scissor(commandBuffer, extent);
 
-	// Opaque
+	// depth pre pass
 	{
-		commandBuffer.begin_render_pass(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass(), opaquePass.GetFrameBuffer(), clearValue);
+		commandBuffer.begin_render_pass(depthPrePass.GetRenderTarget(), depthPrePass.GetRenderPass(), depthPrePass.GetFrameBuffer(), clearValue);
 		// update and bind buffer
-		bind_pipeline_state(commandBuffer, opaquePass.pipelines.at(DepthPrePassOrder));
+		bind_pipeline_state(commandBuffer, depthPrePass.pipelines.at(DepthPrePassOrder));
 		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
 		{
 			auto node    = iter->second.first;
 			auto submesh = iter->second.second;
 			update_global_uniform_buffers(commandBuffer, node);
-			bind_descriptor(commandBuffer, submesh, opaquePass.pipelines.at(DepthPrePassOrder));
-			if (bind_vertex_input(commandBuffer, submesh, opaquePass.pipelines.at(DepthPrePassOrder)))
+			bind_descriptor(commandBuffer, submesh, depthPrePass.pipelines.at(DepthPrePassOrder));
+			if (bind_vertex_input(commandBuffer, submesh, depthPrePass.pipelines.at(DepthPrePassOrder)))
 			{
 				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
 			}

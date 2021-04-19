@@ -3,8 +3,8 @@
  */
 #pragma once
 
-#include "scene_graph/components/camera.h"
 #include "platform/platform.h"
+#include "scene_graph/components/camera.h"
 #include "vulkan_sample.h"
 #include <initializer_list>
 #include <unordered_map>
@@ -19,27 +19,17 @@
 #	define DEBUG_ASSERT(exp, ...) 0
 #endif
 
+#define MAX_LIGHTS_COUNT 128
+
 class vkb::sg::Node;
 class vkb::sg::SubMesh;
 
 class forward_plus : public vkb::VulkanSample
 {
-	struct MouseButton
-	{
-		bool left   = false;
-		bool right  = false;
-		bool middle = false;
-	};
-
-	struct TouchPos
-	{
-		int32_t x = 0;
-		int32_t y = 0;
-	};
-
 	enum RenderPassOrder : uint32_t
 	{
-		DepthPrePassOrder = 1000
+		DepthPrePassOrder = 1000,
+		OpaquePassOrder   = 1500
 	};
 
 	struct alignas(16) GlobalUniform
@@ -47,6 +37,15 @@ class forward_plus : public vkb::VulkanSample
 		glm::mat4 model;
 		glm::mat4 view_project;
 		glm::vec3 camera_position;
+	};
+
+	struct LightBuffer
+	{
+		glm::vec4 pos;          // pos and radius
+		glm::vec4 color;        // color and intensity
+		glm::vec4 coneDir;
+		glm::vec2 coneAngle;
+		uint32_t  type;
 	};
 
 	struct RenderPassEntry
@@ -182,11 +181,16 @@ class forward_plus : public vkb::VulkanSample
 	const std::string k_title = "Vulkan Example";
 	const std::string k_name  = "Forward Plus";
 
-	vkb::sg::Camera *camera;
+	vkb::sg::Camera *camera{nullptr};
 
 	/*                            Rendering                        */
-	bool            supportBlit = false;
-	RenderPassEntry opaquePass{};
+	bool                               supportBlit{false};
+	std::shared_ptr<vkb::core::Image>  colorImage{nullptr};
+	std::shared_ptr<vkb::core::Image>  depthImage{nullptr};
+	std::shared_ptr<vkb::core::Image>  linearDepth{nullptr};
+	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
+	RenderPassEntry                    depthPrePass{};
+	RenderPassEntry                    opaquePass{};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
