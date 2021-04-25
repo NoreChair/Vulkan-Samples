@@ -110,10 +110,12 @@ void forward_plus::prepare_pipelines()
 	Device &refDevice = *device.get();
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
-	depthImage  = std::make_shared<Image>(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
-	colorImage  = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	linearDepth = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	lightBuffer = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+	depthImage       = std::make_shared<Image>(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
+	colorImage       = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	linearDepthImage = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	lightBuffer      = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
 
 	DepthStencilState defaultDepthState;        // depth test/write
 	ColorBlendState   defaultColorState;
@@ -154,25 +156,27 @@ void forward_plus::prepare_pipelines()
 		depthOnlyPipelineState.set_render_pass(depthPrePass.GetRenderPass());
 		depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
 		depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
-		depthPrePass.pipelines.emplace(std::make_pair((uint32_t) DepthPrePassOrder, std::move(depthOnlyPipelineState)));
+		depthPrePass.pipelines.emplace(std::make_pair((uint32_t) Opaque, std::move(depthOnlyPipelineState)));
 	}
 
 	{
 		// Linear depth
-		ShaderProgram * linearDepthProgram = ShaderProgram::Find(std::string("forward_plus/liner_depth"));
-		PipelineLayout &linearDepthLayout  = refDevice.get_resource_cache().request_pipeline_layout(linearDepthProgram->GetShaderModules());
-		PipelineState   linearDpethState;
-		linearDpethState.set_pipeline_layout(linearDepthLayout);
-		refDevice.get_resource_cache().request_compute_pipeline(linearDpethState);
-
+		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("forward_plus/liner_depth"));
+		linearDepthPass.pipelineLayout    = &refDevice.get_resource_cache().request_pipeline_layout(linearDepthProgram->GetShaderModules());
+		PipelineState pipelineState;
+		pipelineState.set_pipeline_layout(*linearDepthPass.pipelineLayout);
+		refDevice.get_resource_cache().request_compute_pipeline(pipelineState);
+#if 0 
 		ShaderProgram * lightGridProgram = ShaderProgram::Find(std::string("forward_plus/light_grid"));
 		PipelineLayout &lightGridLayout  = refDevice.get_resource_cache().request_pipeline_layout(lightGridProgram->GetShaderModules());
 		PipelineState   lightGridState;
 		lightGridState.set_pipeline_layout(lightGridLayout);
 		refDevice.get_resource_cache().request_compute_pipeline(lightGridState);
+#endif
 	}
 
 	// opaque render
+#if 0
 	{
 		std::vector<Image> offScreenImages;
 		offScreenImages.push_back(std::move(*colorImage));
@@ -198,6 +202,7 @@ void forward_plus::prepare_pipelines()
 		opaqueRenderState.set_color_blend_state(defaultColorState);
 		opaquePass.pipelines.emplace(std::make_pair((uint32_t) OpaquePassOrder, std::move(opaqueRenderState)));
 	}
+#endif
 }
 
 void forward_plus::prepare_resources()
@@ -263,14 +268,14 @@ void forward_plus::render(float delta_time)
 	{
 		commandBuffer.begin_render_pass(depthPrePass.GetRenderTarget(), depthPrePass.GetRenderPass(), depthPrePass.GetFrameBuffer(), clearValue);
 		// update and bind buffer
-		bind_pipeline_state(commandBuffer, depthPrePass.pipelines.at(DepthPrePassOrder));
+		bind_pipeline_state(commandBuffer, depthPrePass.pipelines.at(Opaque));
 		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
 		{
 			auto node    = iter->second.first;
 			auto submesh = iter->second.second;
 			update_global_uniform_buffers(commandBuffer, node);
-			bind_descriptor(commandBuffer, submesh, depthPrePass.pipelines.at(DepthPrePassOrder));
-			if (bind_vertex_input(commandBuffer, submesh, depthPrePass.pipelines.at(DepthPrePassOrder)))
+			bind_descriptor(commandBuffer, submesh, depthPrePass.pipelines.at(Opaque));
+			if (bind_vertex_input(commandBuffer, submesh, depthPrePass.pipelines.at(Opaque)))
 			{
 				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
 			}
@@ -281,6 +286,66 @@ void forward_plus::render(float delta_time)
 		}
 
 		commandBuffer.end_render_pass();
+	}
+
+	const ImageView &depthView = depthPrePass.GetRenderTarget().get_views()[0];
+	{
+		// linear depth
+		vkb::ImageMemoryBarrier barrier{};
+		barrier.src_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		barrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
+		commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
+
+		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		barrier.src_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		commandBuffer.image_memory_barrier(depthView, barrier);
+
+		commandBuffer.bind_pipeline_layout(*linearDepthPass.pipelineLayout);
+		commandBuffer.bind_image(depthView, 0, 0, 0);
+		commandBuffer.bind_image(*linearDepthImageView, 0, 1, 0);
+
+		VkExtent3D extent = linearDepthImage->get_extent();
+		struct
+		{
+			float nearPlane;
+			float farPlane;
+			int   width;
+			int   height;
+		} uniforms{camera->get_near_plane(), camera->get_far_plane(), extent.width, extent.height};
+
+		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
+		allocation.update(uniforms);
+		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
+		commandBuffer.dispatch((uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f), 1);
+	}
+
+	{
+		//
+		ImageMemoryBarrier barrier{};
+		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
+
+		barrier.dst_access_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
+		barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		barrier.old_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		commandBuffer.image_memory_barrier(depthView, barrier);
+	}
+
+	{
+		// show linear depth pass
 	}
 
 	blit_and_present(commandBuffer);

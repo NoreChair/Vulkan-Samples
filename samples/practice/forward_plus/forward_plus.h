@@ -26,10 +26,10 @@ class vkb::sg::SubMesh;
 
 class forward_plus : public vkb::VulkanSample
 {
-	enum RenderPassOrder : uint32_t
+	enum RenderOrder : uint32_t
 	{
-		DepthPrePassOrder = 1000,
-		OpaquePassOrder   = 1500
+		Opaque,
+		AlphaBlend
 	};
 
 	struct alignas(16) GlobalUniform
@@ -69,6 +69,11 @@ class forward_plus : public vkb::VulkanSample
 		{
 			return *renderPass;
 		}
+	};
+
+	struct ComputePassEntry
+	{
+		vkb::PipelineLayout *pipelineLayout{nullptr};
 	};
 
 	struct ShaderProgram
@@ -187,10 +192,15 @@ class forward_plus : public vkb::VulkanSample
 	bool                               supportBlit{false};
 	std::shared_ptr<vkb::core::Image>  colorImage{nullptr};
 	std::shared_ptr<vkb::core::Image>  depthImage{nullptr};
-	std::shared_ptr<vkb::core::Image>  linearDepth{nullptr};
+	std::shared_ptr<vkb::core::Image>  linearDepthImage{nullptr};
 	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
-	RenderPassEntry                    depthPrePass{};
-	RenderPassEntry                    opaquePass{};
+
+	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
+
+	RenderPassEntry  depthPrePass{};
+	ComputePassEntry linearDepthPass{};
+	ComputePassEntry lightGridPass{};
+	RenderPassEntry  opaquePass{};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
