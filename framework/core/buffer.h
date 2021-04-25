@@ -146,6 +146,9 @@ class Buffer
 
 	/// Whether the buffer has been mapped with vmaMapMemory
 	bool mapped{false};
+
+	/// Whether the buffer is coherent or not
+	bool coherent{false};
 };
 }        // namespace core
 }        // namespace vkb

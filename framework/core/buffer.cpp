@@ -54,6 +54,10 @@ Buffer::Buffer(Device &device, VkDeviceSize size, VkBufferUsageFlags buffer_usag
 		throw VulkanException{result, "Cannot create Buffer"};
 	}
 
+	VkMemoryPropertyFlags memory_property_flags;
+	vmaGetMemoryTypeProperties(device.get_memory_allocator(), allocation_info.memoryType, &memory_property_flags);
+	coherent = (memory_property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+
 	memory = allocation_info.deviceMemory;
 
 	if (persistent)
@@ -140,7 +144,10 @@ void Buffer::unmap()
 
 void Buffer::flush() const
 {
-	vmaFlushAllocation(device.get_memory_allocator(), allocation, 0, size);
+	if (!coherent)
+	{
+		vmaFlushAllocation(device.get_memory_allocator(), allocation, 0, size);
+	}
 }
 
 void Buffer::update(const std::vector<uint8_t> &data, size_t offset)
