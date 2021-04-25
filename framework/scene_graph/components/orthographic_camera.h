@@ -54,13 +54,13 @@ class OrthographicCamera : public Camera
 
 	float get_top() const;
 
-	void set_near_plane(float near_plane);
+	void set_near_plane(float near_plane) override;
 
-	float get_near_plane() const;
+	float get_near_plane() const override;
 
-	void set_far_plane(float far_plane);
+	void set_far_plane(float far_plane) override;
 
-	float get_far_plane() const;
+	float get_far_plane() const override;
 
 	virtual glm::mat4 get_projection() override;
 

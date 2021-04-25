@@ -46,13 +46,13 @@ class PerspectiveCamera : public Camera
 
 	void set_field_of_view(float fov);
 
-	float get_far_plane() const;
+	float get_far_plane() const override;
 
-	void set_far_plane(float zfar);
+	void set_far_plane(float zfar) override;
 
-	float get_near_plane() const;
+	float get_near_plane() const override;
 
-	void set_near_plane(float znear);
+	void set_near_plane(float znear) override;
 
 	float get_aspect_ratio();
 

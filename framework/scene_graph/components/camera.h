@@ -56,6 +56,14 @@ class Camera : public Component
 
 	void set_pre_rotation(const glm::mat4 &pre_rotation);
 
+	virtual float get_far_plane() const = 0;
+
+	virtual void set_far_plane(float zfar) = 0;
+
+	virtual float get_near_plane() const = 0;
+
+	virtual void set_near_plane(float znear) = 0;
+
   private:
 	Node *node{nullptr};
 
