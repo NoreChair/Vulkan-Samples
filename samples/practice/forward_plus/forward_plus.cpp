@@ -12,6 +12,13 @@ using namespace vkb::core;
 
 std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>> forward_plus::ShaderProgram::shaderProgramPool = std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>>();
 
+const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::Image &&swapchain_image) -> std::unique_ptr<RenderTarget> {
+	VkFormat                 depth_format = get_suitable_depth_format(swapchain_image.get_device().get_gpu().get_handle());
+	std::vector<core::Image> images;
+	images.push_back(std::move(swapchain_image));
+	return std::make_unique<RenderTarget>(std::move(images));
+};
+
 forward_plus::forward_plus()
 {
 	set_name(k_name);
@@ -40,7 +47,7 @@ void forward_plus::prepare_render_context()
 	// so we can just copy offscreen image to swap chain image
 	auto &properties = render_context->get_swapchain().get_properties();
 	properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-	render_context->prepare();
+	render_context->prepare(1, swap_chain_create_func);
 }
 
 const std::vector<const char *> forward_plus::get_validation_layers()
@@ -108,19 +115,40 @@ void forward_plus::prepare_pipelines()
 	uint32_t windowHeight = extent2d.height;
 
 	Device &refDevice = *device.get();
+
+	auto samplerCreateInfo         = initializers::sampler_create_info();
+	samplerCreateInfo.magFilter    = VK_FILTER_LINEAR;
+	samplerCreateInfo.minFilter    = VK_FILTER_LINEAR;
+	samplerCreateInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerCreateInfo.minLod       = 0;
+	samplerCreateInfo.maxLod       = VK_LOD_CLAMP_NONE;
+	linearClampSampler             = std::make_shared<Sampler>(refDevice, samplerCreateInfo);
+
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
-	depthImage       = std::make_shared<Image>(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
-	colorImage       = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
+	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+
 	linearDepthImage = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	lightBuffer      = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
 
-	DepthStencilState defaultDepthState;        // depth test/write
+	std::vector<Image> offScreenFBO;
+	offScreenFBO.emplace_back(std::move(colorImage));
+	offScreenFBO.emplace_back(std::move(depthImage));
+	auto offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenFBO));
+
+	DepthStencilState defaultDepthState;            // depth test/write on
+	DepthStencilState postProcessDepthState;        // depth test/write off
 	ColorBlendState   defaultColorState;
 	ColorBlendState   depthOnlyColorState;
 	{
+		postProcessDepthState.depth_test_enable  = false;
+		postProcessDepthState.depth_write_enable = false;
 		ColorBlendAttachmentState defaultAttaState;
 		//ColorBlendAttachmentState blendAttaState;
 		//blendAttaState.blend_enable           = VK_TRUE;
@@ -134,40 +162,31 @@ void forward_plus::prepare_pipelines()
 	}
 
 	{
-		// Dpeth Pass
-		std::vector<Image> offScreenImages;
-		offScreenImages.push_back(std::move(*depthImage));
-
+		// Dpeth Pre Pass
 		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
 
 		std::vector<SubpassInfo> subPassInfos;
 		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
-		depthPrePass.renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
-		depthPrePass.renderPass   = &refDevice.get_resource_cache().request_render_pass(depthPrePass.renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
-		depthPrePass.frameBuffer  = &refDevice.get_resource_cache().request_framebuffer(depthPrePass.GetRenderTarget(), depthPrePass.GetRenderPass());
+		depthPrePass.renderTarget = offScreenRT;
+		depthPrePass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
 
-		ShaderProgram * depthProgram = ShaderProgram::Find(std::string("forward_plus/depth_only"));
-		PipelineLayout &layout       = refDevice.get_resource_cache().request_pipeline_layout(depthProgram->GetShaderModules());
-
-		PipelineState depthOnlyPipelineState;
-		depthOnlyPipelineState.set_pipeline_layout(layout);
-		depthOnlyPipelineState.set_render_pass(depthPrePass.GetRenderPass());
-		depthOnlyPipelineState.set_depth_stencil_state(defaultDepthState);
-		depthOnlyPipelineState.set_color_blend_state(depthOnlyColorState);
-		depthPrePass.pipelines.emplace(std::make_pair((uint32_t) Opaque, std::move(depthOnlyPipelineState)));
+		PipelineState *depthOnlyPipelineState = depthPrePass.PushPipeline(refDevice, Opaque, std::string("depth_only"));
+		depthOnlyPipelineState->set_depth_stencil_state(defaultDepthState);
+		depthOnlyPipelineState->set_color_blend_state(depthOnlyColorState);
 	}
 
 	{
-		// Linear depth
-		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("forward_plus/liner_depth"));
+		// Linear Depth
+		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("linear_depth"));
 		linearDepthPass.pipelineLayout    = &refDevice.get_resource_cache().request_pipeline_layout(linearDepthProgram->GetShaderModules());
 		PipelineState pipelineState;
 		pipelineState.set_pipeline_layout(*linearDepthPass.pipelineLayout);
 		refDevice.get_resource_cache().request_compute_pipeline(pipelineState);
 #if 0 
-		ShaderProgram * lightGridProgram = ShaderProgram::Find(std::string("forward_plus/light_grid"));
+		ShaderProgram * lightGridProgram = ShaderProgram::Find(std::string("light_grid"));
 		PipelineLayout &lightGridLayout  = refDevice.get_resource_cache().request_pipeline_layout(lightGridProgram->GetShaderModules());
 		PipelineState   lightGridState;
 		lightGridState.set_pipeline_layout(lightGridLayout);
@@ -175,13 +194,23 @@ void forward_plus::prepare_pipelines()
 #endif
 	}
 
-	// opaque render
-#if 0
 	{
-		std::vector<Image> offScreenImages;
-		offScreenImages.push_back(std::move(*colorImage));
-		offScreenImages.push_back(std::move(*depthImage));
+		// Debug Depth
+		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
+		debugDepthPass.renderTarget = offScreenRT;
+		debugDepthPass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
+
+		PipelineState *debugDepthState = debugDepthPass.PushPipeline(refDevice, PostProcess, std::string("debug_depth"));
+		debugDepthState->set_depth_stencil_state(postProcessDepthState);
+	}
+
+	// opaque render
+	{
 		std::vector<LoadStoreInfo> loadStoreInfos;
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE});
@@ -189,20 +218,13 @@ void forward_plus::prepare_pipelines()
 		std::vector<SubpassInfo> subPassInfos;
 		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
-		opaquePass.renderTarget = std::make_shared<RenderTarget>(std::move(offScreenImages));
-		opaquePass.renderPass   = &refDevice.get_resource_cache().request_render_pass(opaquePass.renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
-		opaquePass.frameBuffer  = &refDevice.get_resource_cache().request_framebuffer(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass());
+		opaquePass.renderTarget = offScreenRT;
+		opaquePass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
 
-		ShaderProgram * pbrProgram = ShaderProgram::Find(std::string("forward_plus/pbr_base"));
-		PipelineLayout &layout     = refDevice.get_resource_cache().request_pipeline_layout(pbrProgram->GetShaderModules());
-		PipelineState   opaqueRenderState;
-		opaqueRenderState.set_pipeline_layout(layout);
-		opaqueRenderState.set_render_pass(opaquePass.GetRenderPass());
-		opaqueRenderState.set_depth_stencil_state(defaultDepthState);
-		opaqueRenderState.set_color_blend_state(defaultColorState);
-		opaquePass.pipelines.emplace(std::make_pair((uint32_t) OpaquePassOrder, std::move(opaqueRenderState)));
+		//PipelineState*   opaqueRenderState = opaquePass.PushPipeline(refDevice, Opaque, std::string("pbr_base"));
+		//opaqueRenderState->set_depth_stencil_state(defaultDepthState);
+		//opaqueRenderState->set_color_blend_state(defaultColorState);
 	}
-#endif
 }
 
 void forward_plus::prepare_resources()
@@ -210,30 +232,59 @@ void forward_plus::prepare_resources()
 	Device &refDevice = *device.get();
 	{
 		// Load Shader
-		// TODO : shader variant
-		ShaderVariant            emptyVariant{};
-		std::vector<std::string> shaderSourceFiles{"forward_plus/depth_only"};
-		std::vector<std::string> computeSourceFiles{"forward_plus/linear_depth"};
-		// assmue shader source contain vertex and fragment
+		struct RProgramSources
+		{
+			std::string programName;
+			std::string vertexName;
+			std::string fragmentName;
+		};
+
+		struct CProgramSources
+		{
+			std::string programName;
+			std::string computeName;
+		};
+
+		ShaderVariant                emptyVariant{};
+		std::vector<RProgramSources> shaderSourceFiles{
+		    {"depth_only", "forward_plus/depth_only.vert", "forward_plus/depth_only.frag"},
+		    {"debug_depth", "forward_plus/screen_base.vert", "forward_plus/debug_depth.frag"},
+		};
+		std::vector<CProgramSources> computeSourceFiles{
+		    {"linear_depth", "forward_plus/linear_depth.comp"},
+		};
+
+		std::unordered_map<std::string, ShaderSource> shaderSources;
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
 		{
-			ShaderSource vsSource(shaderSourceFiles[i] + ".vert");
-			ShaderSource fsSource(shaderSourceFiles[i] + ".frag");
-			auto &       shaderVS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource, emptyVariant);
-			auto &       shaderFS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, emptyVariant);
+			if (shaderSources.find(shaderSourceFiles[i].vertexName) == shaderSources.end())
+			{
+				shaderSources.emplace(std::make_pair(shaderSourceFiles[i].vertexName, std::move(ShaderSource(shaderSourceFiles[i].vertexName))));
+			}
+
+			if (shaderSources.find(shaderSourceFiles[i].fragmentName) == shaderSources.end())
+			{
+				shaderSources.emplace(std::make_pair(shaderSourceFiles[i].fragmentName, std::move(ShaderSource(shaderSourceFiles[i].fragmentName))));
+			}
+
+			auto &vsSource = shaderSources[shaderSourceFiles[i].vertexName];
+			auto &fsSource = shaderSources[shaderSourceFiles[i].fragmentName];
+			auto &shaderVS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource, emptyVariant);
+			auto &shaderFS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, emptyVariant);
 
 			std::initializer_list<ShaderModule *> initList{&shaderVS, &shaderFS};
 
 			auto program = std::make_shared<ShaderProgram>(std::move(initList));
-			ShaderProgram::AddShaderProgram(shaderSourceFiles[i], std::move(program));
+			ShaderProgram::AddShaderProgram(shaderSourceFiles[i].programName, std::move(program));
 		}
 
 		for (int i = 0; i < computeSourceFiles.size(); i++)
 		{
-			ShaderSource source(computeSourceFiles[i] + ".comp");
+			ShaderSource source(computeSourceFiles[i].computeName);
 			auto &       shaderCS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_COMPUTE_BIT, source, emptyVariant);
 			auto         program  = std::make_shared<ShaderProgram>(&shaderCS);
-			ShaderProgram::AddShaderProgram(computeSourceFiles[i], std::move(program));
+			ShaderProgram::AddShaderProgram(computeSourceFiles[i].programName, std::move(program));
+			shaderSources.emplace(std::make_pair(computeSourceFiles[i].computeName, std::move(source)));
 		}
 	}
 
@@ -274,8 +325,8 @@ void forward_plus::render(float delta_time)
 			auto node    = iter->second.first;
 			auto submesh = iter->second.second;
 			update_global_uniform_buffers(commandBuffer, node);
-			bind_descriptor(commandBuffer, submesh, depthPrePass.pipelines.at(Opaque));
-			if (bind_vertex_input(commandBuffer, submesh, depthPrePass.pipelines.at(Opaque)))
+			bind_descriptor(commandBuffer, depthPrePass.pipelines.at(Opaque), submesh);
+			if (bind_vertex_input(commandBuffer, depthPrePass.pipelines.at(Opaque), submesh))
 			{
 				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
 			}
@@ -288,7 +339,7 @@ void forward_plus::render(float delta_time)
 		commandBuffer.end_render_pass();
 	}
 
-	const ImageView &depthView = depthPrePass.GetRenderTarget().get_views()[0];
+	const ImageView &depthView = depthPrePass.GetRenderTarget().get_views()[1];
 	{
 		// linear depth
 		vkb::ImageMemoryBarrier barrier{};
@@ -300,10 +351,10 @@ void forward_plus::render(float delta_time)
 
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		barrier.src_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		barrier.src_access_mask = 0;
 		barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-		barrier.old_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 
 		commandBuffer.bind_pipeline_layout(*linearDepthPass.pipelineLayout);
@@ -313,10 +364,10 @@ void forward_plus::render(float delta_time)
 		VkExtent3D extent = linearDepthImage->get_extent();
 		struct
 		{
-			float nearPlane;
-			float farPlane;
-			int   width;
-			int   height;
+			float    nearPlane;
+			float    farPlane;
+			uint32_t width;
+			uint32_t height;
 		} uniforms{camera->get_near_plane(), camera->get_far_plane(), extent.width, extent.height};
 
 		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
@@ -336,16 +387,23 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
 
-		barrier.dst_access_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-		barrier.old_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-		barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 	}
 
 	{
 		// show linear depth pass
+		commandBuffer.begin_render_pass(debugDepthPass.GetRenderTarget(), debugDepthPass.GetRenderPass(), debugDepthPass.GetFrameBuffer(), clearValue);
+		bind_pipeline_state(commandBuffer, debugDepthPass.pipelines[PostProcess]);
+		bind_descriptor(commandBuffer, debugDepthPass.pipelines[PostProcess]);
+		commandBuffer.bind_image(*linearDepthImageView, *linearClampSampler, 0, 0, 0);
+		bind_vertex_input(commandBuffer, debugDepthPass.pipelines[PostProcess]);
+		commandBuffer.draw(3, 1, 0, 0);
+		commandBuffer.end_render_pass();
 	}
 
 	blit_and_present(commandBuffer);
@@ -377,7 +435,7 @@ void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::P
 	commandBuffer.set_multisample_state(pipeline.get_multisample_state());
 }
 
-void forward_plus::bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline, bool bindMaterial)
+void forward_plus::bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh, bool bindMaterial)
 {
 	const PipelineLayout &layout = pipeline.get_pipeline_layout();
 	commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(layout));
@@ -387,7 +445,7 @@ void forward_plus::bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::sg::S
 		commandBuffer.set_specialization_constant(iter->first, iter->second);
 	}
 
-	if (bindMaterial)
+	if (bindMaterial && submesh)
 	{
 		DescriptorSetLayout &descriptorSetLayout = layout.get_descriptor_set_layout(0);
 
@@ -425,12 +483,19 @@ void forward_plus::bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::sg::S
 	}
 }
 
-bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline)
+bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh)
 {
 	auto &pipelineLayout         = pipeline.get_pipeline_layout();
 	auto  vertex_input_resources = pipelineLayout.get_resources(ShaderResourceType::Input, VK_SHADER_STAGE_VERTEX_BIT);
 
 	VertexInputState vertex_input_state;
+
+	if (submesh == nullptr)
+	{
+		DEBUG_ASSERT(!vertex_input_resources.size(), "Only full screen quad rendering allow null mesh draw.");
+		commandBuffer.set_vertex_input_state(vertex_input_state);
+		return false;
+	}
 
 	for (auto &input_resource : vertex_input_resources)
 	{

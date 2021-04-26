@@ -3,6 +3,7 @@
  */
 #pragma once
 
+#include "common/vk_common.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
 #include "vulkan_sample.h"
@@ -12,8 +13,9 @@
 #if defined(DEBUG) || defined(_DEBUG)
 #	define DEBUG_ASSERT(exp, ...) \
 		{                          \
+			if (!exp)              \
+				LOGD(__VA_ARGS__)  \
 			assert(exp);           \
-			LOGD(__VA_ARGS__)      \
 		}
 #else
 #	define DEBUG_ASSERT(exp, ...) 0
@@ -29,7 +31,8 @@ class forward_plus : public vkb::VulkanSample
 	enum RenderOrder : uint32_t
 	{
 		Opaque,
-		AlphaBlend
+		AlphaBlend,
+		PostProcess
 	};
 
 	struct alignas(16) GlobalUniform
@@ -50,10 +53,10 @@ class forward_plus : public vkb::VulkanSample
 
 	struct RenderPassEntry
 	{
-		std::shared_ptr<vkb::RenderTarget>   renderTarget;
-		vkb::Framebuffer *                   frameBuffer;
-		vkb::RenderPass *                    renderPass;
-		std::map<size_t, vkb::PipelineState> pipelines;
+		std::shared_ptr<vkb::RenderTarget>     renderTarget;
+		vkb::Framebuffer *                     frameBuffer;
+		vkb::RenderPass *                      renderPass;
+		std::map<uint32_t, vkb::PipelineState> pipelines;
 
 		inline vkb::RenderTarget &GetRenderTarget()
 		{
@@ -68,6 +71,27 @@ class forward_plus : public vkb::VulkanSample
 		inline vkb::RenderPass &GetRenderPass()
 		{
 			return *renderPass;
+		}
+
+		void PrebuildPass(vkb::Device &device, std::vector<vkb::LoadStoreInfo> &loadStoreInfos, std::vector<vkb::SubpassInfo> &subPassInfos)
+		{
+			DEBUG_ASSERT(renderTarget != nullptr, "RenderTarget can not be nullptr");
+			renderPass = &device.get_resource_cache().request_render_pass(renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
+			DEBUG_ASSERT(renderPass != nullptr, "RenderPass can not be nullptr");
+			frameBuffer = &device.get_resource_cache().request_framebuffer(GetRenderTarget(), GetRenderPass());
+			DEBUG_ASSERT(frameBuffer != nullptr, "FrameBuffer can not be nullptr");
+		}
+
+		vkb::PipelineState *PushPipeline(vkb::Device &device, uint32_t order, std::string &programName)
+		{
+			ShaderProgram *      program = ShaderProgram::Find(programName);
+			vkb::PipelineLayout &layout  = device.get_resource_cache().request_pipeline_layout(program->GetShaderModules());
+
+			vkb::PipelineState pipelineState;
+			pipelineState.set_pipeline_layout(layout);
+			pipelineState.set_render_pass(GetRenderPass());
+			pipelines.emplace(std::make_pair(order, std::move(pipelineState)));
+			return &pipelines[order];
 		}
 	};
 
@@ -158,9 +182,11 @@ class forward_plus : public vkb::VulkanSample
 		std::vector<vkb::ShaderModule *>                                  shaderModules;
 	};
 
+	static const vkb::RenderTarget::CreateFunc swap_chain_create_func;
+
   public:
 	forward_plus();
-	~forward_plus();
+	virtual ~forward_plus();
 
   private:
 	virtual bool                            prepare(vkb::Platform &platform) override;
@@ -177,8 +203,8 @@ class forward_plus : public vkb::VulkanSample
 	void render(float delta_time);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
-	void bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline, bool bindMaterial = false);
-	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::sg::SubMesh *submesh, vkb::PipelineState &pipeline);
+	void bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh = nullptr, bool bindMaterial = false);
+	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh = nullptr);
 	void blit_and_present(vkb::CommandBuffer &commandBuffer);
 	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
 
@@ -190,16 +216,17 @@ class forward_plus : public vkb::VulkanSample
 
 	/*                            Rendering                        */
 	bool                               supportBlit{false};
-	std::shared_ptr<vkb::core::Image>  colorImage{nullptr};
-	std::shared_ptr<vkb::core::Image>  depthImage{nullptr};
 	std::shared_ptr<vkb::core::Image>  linearDepthImage{nullptr};
 	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
 
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
 
+	std::shared_ptr<vkb::core::Sampler> linearClampSampler{nullptr};
+
 	RenderPassEntry  depthPrePass{};
 	ComputePassEntry linearDepthPass{};
 	ComputePassEntry lightGridPass{};
+	RenderPassEntry  debugDepthPass{};
 	RenderPassEntry  opaquePass{};
 };
 
