@@ -43,8 +43,12 @@ layout(set = 0, binding = 0) uniform LightGridUniforms {
     mat4 viewProjMatrix;
 };
 
+struct LightBufferDataByte{
+    uint data[16]; // bit covert to LightBufferData
+};
+
 layout(set = 0, std430, binding = 1) readonly buffer LightBuffer{
-    LightBufferData lightBufferData[];
+    LightBufferDataByte lightBufferData[];
 };
 layout(set = 0, std430, binding = 2) buffer LightGrid{
     uint lightGridData[];
@@ -55,3 +59,10 @@ layout(set = 0, std430, binding = 3) buffer LightGridBitMask{
 
 layout(set = 0, r32f, binding = 4) readonly uniform highp image2D linearDepthTexture;
 
+shared uint minDepthUint;
+shared uint maxDepthUint;
+shared uint tileLightCountSphere;
+shared uint tileLightCountCone;
+shared uint tileLightIndicesSphere[MAX_LIGHTS];
+shared uint tileLightIndicesCone[MAX_LIGHTS];
+shared uvec4 tileLightBitMask;
