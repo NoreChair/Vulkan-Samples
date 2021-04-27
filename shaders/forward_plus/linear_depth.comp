@@ -19,8 +19,7 @@ void main(){
 
     ivec2 id = ivec2(gl_GlobalInvocationID.xy);
     vec4 depth = imageLoad(sceneDepth, id).rrrr;
-    // imageStore(linearDepth, id, depth);
     // reverse z
-    // imageStore(linearDepth, id, 2.0 * near / (far + near - (near - far) * depth));
-    imageStore(linearDepth, id, 2.0 * near / (far + near - (far - near) * depth));
+    imageStore(linearDepth, id, -near / (near + (near - far) * depth));
+    // imageStore(linearDepth, id, -near / (far + (far - near) * depth));
 }

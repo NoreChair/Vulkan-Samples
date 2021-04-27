@@ -307,7 +307,9 @@ void forward_plus::prepare_resources()
 void forward_plus::prepare_camera()
 {
 	auto &camera_node = vkb::add_free_camera(*scene, "main_camera", get_render_context().get_surface_extent());
-	camera            = &camera_node.get_component<vkb::sg::Camera>();
+
+	camera = &camera_node.get_component<vkb::sg::Camera>();
+	camera->set_far_plane(10000.0f);
 }
 
 void forward_plus::render(float delta_time)
