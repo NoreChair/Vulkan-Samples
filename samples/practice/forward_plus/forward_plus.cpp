@@ -129,11 +129,15 @@ void forward_plus::prepare_pipelines()
 
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
-	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VK_SAMPLE_COUNT_1_BIT, 1, 1, VK_IMAGE_TILING_OPTIMAL, 0, 0, nullptr);
+	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	linearDepthImage = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	lightBuffer      = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+	postProcessVB    = std::make_shared<Buffer>(refDevice, sizeof(float) * 9, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+	float fullScreenTriangle[] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
+	postProcessVB->update(&fullScreenTriangle, sizeof(float) * 9);
 
 	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
 
@@ -149,6 +153,7 @@ void forward_plus::prepare_pipelines()
 	{
 		postProcessDepthState.depth_test_enable  = false;
 		postProcessDepthState.depth_write_enable = false;
+		postProcessDepthState.depth_compare_op   = VK_COMPARE_OP_ALWAYS;
 		ColorBlendAttachmentState defaultAttaState;
 		//ColorBlendAttachmentState blendAttaState;
 		//blendAttaState.blend_enable           = VK_TRUE;
@@ -207,6 +212,11 @@ void forward_plus::prepare_pipelines()
 
 		PipelineState *debugDepthState = debugDepthPass.PushPipeline(refDevice, PostProcess, std::string("debug_depth"));
 		debugDepthState->set_depth_stencil_state(postProcessDepthState);
+		debugDepthState->set_color_blend_state(defaultColorState);
+		VertexInputState vertexInputState;
+		vertexInputState.bindings.emplace_back(VkVertexInputBindingDescription{0, sizeof(float) * 3, VK_VERTEX_INPUT_RATE_VERTEX});
+		vertexInputState.attributes.emplace_back(VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});
+		debugDepthState->set_vertex_input_state(vertexInputState);
 	}
 
 	// opaque render
@@ -354,12 +364,13 @@ void forward_plus::render(float delta_time)
 		barrier.src_access_mask = 0;
 		barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		barrier.old_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
-		barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 
 		commandBuffer.bind_pipeline_layout(*linearDepthPass.pipelineLayout);
-		commandBuffer.bind_image(depthView, 0, 0, 0);
-		commandBuffer.bind_image(*linearDepthImageView, 0, 1, 0);
+		const auto &descLayout = linearDepthPass.pipelineLayout->get_descriptor_set_layout(0);
+		commandBuffer.bind_input(depthView, 0, 0, 0);
+		commandBuffer.bind_input(*linearDepthImageView, 0, 1, 0);
 
 		VkExtent3D extent = linearDepthImage->get_extent();
 		struct
@@ -372,7 +383,7 @@ void forward_plus::render(float delta_time)
 
 		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
 		allocation.update(uniforms);
-		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
+		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 2, 0);
 		commandBuffer.dispatch((uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f), 1);
 	}
 
@@ -390,7 +401,7 @@ void forward_plus::render(float delta_time)
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-		barrier.old_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 	}
@@ -401,7 +412,8 @@ void forward_plus::render(float delta_time)
 		bind_pipeline_state(commandBuffer, debugDepthPass.pipelines[PostProcess]);
 		bind_descriptor(commandBuffer, debugDepthPass.pipelines[PostProcess]);
 		commandBuffer.bind_image(*linearDepthImageView, *linearClampSampler, 0, 0, 0);
-		bind_vertex_input(commandBuffer, debugDepthPass.pipelines[PostProcess]);
+		commandBuffer.set_vertex_input_state(debugDepthPass.pipelines[PostProcess].get_vertex_input_state());
+		commandBuffer.bind_vertex_buffers(0, {*postProcessVB}, {0});
 		commandBuffer.draw(3, 1, 0, 0);
 		commandBuffer.end_render_pass();
 	}
@@ -489,13 +501,6 @@ bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::Pip
 	auto  vertex_input_resources = pipelineLayout.get_resources(ShaderResourceType::Input, VK_SHADER_STAGE_VERTEX_BIT);
 
 	VertexInputState vertex_input_state;
-
-	if (submesh == nullptr)
-	{
-		DEBUG_ASSERT(!vertex_input_resources.size(), "Only full screen quad rendering allow null mesh draw.");
-		commandBuffer.set_vertex_input_state(vertex_input_state);
-		return false;
-	}
 
 	for (auto &input_resource : vertex_input_resources)
 	{

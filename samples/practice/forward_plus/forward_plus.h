@@ -13,7 +13,7 @@
 #if defined(DEBUG) || defined(_DEBUG)
 #	define DEBUG_ASSERT(exp, ...) \
 		{                          \
-			if (!exp)              \
+			if (!(exp))            \
 				LOGD(__VA_ARGS__)  \
 			assert(exp);           \
 		}
@@ -218,6 +218,7 @@ class forward_plus : public vkb::VulkanSample
 	bool                               supportBlit{false};
 	std::shared_ptr<vkb::core::Image>  linearDepthImage{nullptr};
 	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
+	std::shared_ptr<vkb::core::Buffer> postProcessVB{nullptr};
 
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
 

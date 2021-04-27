@@ -1,7 +1,7 @@
 #version 320 es
 precision highp float;
 
-layout(set = 0, binding = 0) uniform CameraUniforms{
+layout(set = 0, binding = 2) uniform CameraUniforms{
     float near;
     float far;
     uint width;
@@ -18,8 +18,9 @@ void main(){
     }
 
     ivec2 id = ivec2(gl_GlobalInvocationID.xy);
-    vec4 depth = imageLoad(sceneDepth, id);
-    depth = depth * 2.0 - 1.0;
-    imageStore(linearDepth, id, 2.0 * near * far / (far + near - (far - near) * depth));
-    // imageStore(linearDepth, id, 1.0/(zMagic * depth + 1.0));
+    vec4 depth = imageLoad(sceneDepth, id).rrrr;
+    // imageStore(linearDepth, id, depth);
+    // reverse z
+    // imageStore(linearDepth, id, 2.0 * near / (far + near - (near - far) * depth));
+    imageStore(linearDepth, id, 2.0 * near / (far + near - (far - near) * depth));
 }
