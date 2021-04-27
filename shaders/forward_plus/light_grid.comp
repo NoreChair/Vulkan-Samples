@@ -1,0 +1,57 @@
+#version 320 es
+precision highp float;
+
+#define MAX_LIGHTS 128
+#define TILE_SIZE (16 + MAX_LIGHTS * 2)         // align with 128 bit
+#define FLT_MIN         1.175494351e-38F        // min positive value
+#define FLT_MAX         3.402823466e+38F        // max value
+#define PI                3.1415926535f
+#define TWOPI            6.283185307f
+
+// https://developer.nvidia.com/content/understanding-structured-buffer-performance
+// for performance reason, data must align with 128-bit
+struct LightBufferData{
+    vec4 position; // xyz=pos, w=radius if light source is sphere
+    vec4 color; // xyz=rgb, w=intensity
+    vec4 coneDir; // xyz=direction, w=range if light source is spot
+    vec3 coneAngles; // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z=cos(outer/2)
+    int lightType;
+    // float4x4 shadowTextureMatrix;
+};
+
+struct SphereLight{
+    vec3 position;
+    vec3 color;
+    float radius;
+    float intensity;
+};
+
+struct SpotLight{
+    vec3 position;
+    vec3 direction;
+    vec3 color;
+    vec3 angle;
+    float intensity;
+    float range;
+};
+
+layout(set = 0, binding = 0) uniform LightGridUniforms {
+    uvec2 viewPort;
+    float invTileDim;
+    uint tileCountX;
+    uint lightBufferCount;
+    mat4 viewProjMatrix;
+};
+
+layout(set = 0, std430, binding = 1) readonly buffer LightBuffer{
+    LightBufferData lightBufferData[];
+};
+layout(set = 0, std430, binding = 2) buffer LightGrid{
+    uint lightGridData[];
+};
+layout(set = 0, std430, binding = 3) buffer LightGridBitMask{
+    uint lightGridBitMaskData[];
+};
+
+layout(set = 0, r32f, binding = 4) readonly uniform highp image2D linearDepthTexture;
+
