@@ -1,5 +1,5 @@
 ﻿#define MAX_LIGHTS 128
-#define TILE_SIZE (16 + MAX_LIGHTS * 2)         // align with 128 bit
+#define TILE_SIZE (16 + MAX_LIGHTS * 4)         // align with 128 bit
 #define FLT_MIN         1.175494351e-38F        // min positive value
 #define FLT_MAX         3.402823466e+38F        // max value
 #define PI                3.1415926535f
@@ -29,7 +29,7 @@ struct SpotLight{
     float3 color;
     float3 angle;
     float intensity;
-    float range;
+    float radius;
 };
 
 cbuffer LightGridCB : register(b0) {
@@ -79,12 +79,12 @@ SphereLight GetSphereLight(LightData lightData){
 
 SpotLight GetSpotLight(LightData lightData){
     SpotLight spotLight = (SpotLight)0;
-    spotLight.position = lightData.color.xyz;
+    spotLight.position = lightData.position.xyz;
     spotLight.direction = lightData.coneDir.xyz;
     spotLight.color = lightData.color.xyz;
     spotLight.angle = lightData.coneAngles.xyz;
     spotLight.intensity = lightData.color.w;
-    spotLight.range = lightData.coneDir.w;
+    spotLight.radius = lightData.coneDir.w;
     return spotLight;
 }
 
@@ -112,10 +112,10 @@ bool SpotInFrustum(float4 frustum[6], SpotLight light){
     for(uint i = 0; i < 6; ++i){
         float3 normal = frustum[i].xyz;
         float b = PointToPlaneDistance(normal, frustum[i].w, light.position.xyz);
-        if(b < -light.range){
+        if(b < -light.radius){
             inSide = false;
             break;
-        }else if (b > -light.range && b < 0){
+        }else if (b > -light.radius && b < 0){
             // center out of frustum but intersect with plane
             // get intersect point and check angle with spot direction
         }
@@ -171,7 +171,7 @@ void FillLightGrid(uint2 globalThreadID, uint2 groupID, uint2 threadID, uint thr
     frustumPlanes[1] = tileMVP[3] - tileMVP[0];
     frustumPlanes[2] = tileMVP[3] + tileMVP[1];
     frustumPlanes[3] = tileMVP[3] - tileMVP[1];
-    frustumPlanes[4] = tileMVP[3]; // DX only
+    frustumPlanes[4] = tileMVP[3]; // DX like only
     frustumPlanes[5] = tileMVP[3] - tileMVP[2];
     for (int n = 0; n < 6; n++)
     {

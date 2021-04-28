@@ -2,38 +2,24 @@
 precision highp float;
 
 #define MAX_LIGHTS 128
-#define TILE_SIZE (16 + MAX_LIGHTS * 2)         // align with 128 bit
+#define TILE_SIZE (4 + MAX_LIGHTS)              // align with 128 bit
 #define FLT_MIN         1.175494351e-38F        // min positive value
 #define FLT_MAX         3.402823466e+38F        // max value
 #define PI                3.1415926535f
 #define TWOPI            6.283185307f
 
-// https://developer.nvidia.com/content/understanding-structured-buffer-performance
-// for performance reason, data must align with 128-bit
 struct LightBufferData{
-    vec4 position; // xyz=pos, w=radius if light source is sphere
-    vec4 color; // xyz=rgb, w=intensity
-    vec4 coneDir; // xyz=direction, w=range if light source is spot
-    vec3 coneAngles; // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z=cos(outer/2)
-    int lightType;
+    vec3 position;              // xyz=pos if light source is sphere
+    vec3 color;                 // xyz=rgb
+    vec3 coneDir;               // xyz=direction if light source is spot
+    vec3 coneAngles;            // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z=cos(outer/2)
+    float radius;
+    float intensity;
+    uint lightType;
     // float4x4 shadowTextureMatrix;
 };
 
-struct SphereLight{
-    vec3 position;
-    vec3 color;
-    float radius;
-    float intensity;
-};
-
-struct SpotLight{
-    vec3 position;
-    vec3 direction;
-    vec3 color;
-    vec3 angle;
-    float intensity;
-    float range;
-};
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform LightGridUniforms {
     uvec2 viewPort;
@@ -43,17 +29,19 @@ layout(set = 0, binding = 0) uniform LightGridUniforms {
     mat4 viewProjMatrix;
 };
 
+// for performance reason, data best align with 128-bit
+// bit covert to LightBufferData
 struct LightBufferDataByte{
-    uint data[16]; // bit covert to LightBufferData
+    uint value[16];
 };
 
 layout(set = 0, std430, binding = 1) readonly buffer LightBuffer{
     LightBufferDataByte lightBufferData[];
 };
-layout(set = 0, std430, binding = 2) buffer LightGrid{
+layout(set = 0, std430, binding = 2) writeonly buffer LightGrid{
     uint lightGridData[];
 };
-layout(set = 0, std430, binding = 3) buffer LightGridBitMask{
+layout(set = 0, std430, binding = 3) writeonly buffer LightGridBitMask{
     uint lightGridBitMaskData[];
 };
 
@@ -66,3 +54,191 @@ shared uint tileLightCountCone;
 shared uint tileLightIndicesSphere[MAX_LIGHTS];
 shared uint tileLightIndicesCone[MAX_LIGHTS];
 shared uvec4 tileLightBitMask;
+
+LightBufferData ConvertLightBufferByte(uint byteData[16]){
+    LightBufferData bufferData;
+    bufferData.position = vec3(uintBitsToFloat(byteData[0]), uintBitsToFloat(byteData[1]), uintBitsToFloat(byteData[2]));
+    bufferData.color = vec3(uintBitsToFloat(byteData[3]), uintBitsToFloat(byteData[4]), uintBitsToFloat(byteData[5]));
+    bufferData.coneDir = vec3(uintBitsToFloat(byteData[6]), uintBitsToFloat(byteData[7]), uintBitsToFloat(byteData[8]));
+    bufferData.coneAngles = vec3(uintBitsToFloat(byteData[9]), uintBitsToFloat(byteData[10]), uintBitsToFloat(byteData[11]));
+    bufferData.radius = uintBitsToFloat(byteData[12]);
+    bufferData.intensity = uintBitsToFloat(byteData[13]);
+    bufferData.lightType = byteData[14];
+    return bufferData;
+}
+
+uvec2 GetTilePos(vec2 pos, vec2 invTileDim){
+    return uvec2(floor(pos * invTileDim));
+}
+
+uint GetTileIndex(uvec2 tilePos, uint tileCountX){
+    return tilePos.y * tileCountX + tilePos.x;
+}
+
+uint GetTileOffset(uint tileIndex){
+    return tileIndex * uint(TILE_SIZE);
+}
+
+float PointToPlaneDistance(vec3 normal, float d, vec3 point){
+    return dot(normal, point) + d;
+}
+
+bool ShpereInFrustum(vec4 frustum[6], LightBufferData light){
+    bool inSide = true;
+    for(uint i = 0u; i < 6u; ++i){
+        vec3 normal = frustum[i].xyz;
+        float b = PointToPlaneDistance(normal, frustum[i].w, light.position.xyz);
+        // normal point in of frustum, so it should be negative
+        if(b < -light.radius){
+            inSide = false;
+            break;
+        }
+    }
+    return inSide;
+}
+
+bool SpotInFrustum(vec4 frustum[6], LightBufferData light){
+    bool inSide = true;
+
+    for(uint i = 0u; i < 6u; ++i){
+        vec3 normal = frustum[i].xyz;
+        float b = PointToPlaneDistance(normal, frustum[i].w, light.position.xyz);
+        if(b < -light.radius){
+            inSide = false;
+            break;
+        }else if (b > -light.radius && b < 0.0){
+            // center out of frustum but intersect with plane
+            // get intersect point and check angle with spot direction
+        }
+    }
+    return inSide;
+}
+
+void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint threadIndex, uint groupSize){
+    float depth = -1.0f;
+    if(globalThreadID.x >= viewPort.x || globalThreadID.y >= viewPort.y){
+        // out of bound
+    }else{
+        depth = imageLoad(linearDepthTexture, ivec2(globalThreadID)).r;
+    }
+
+    if(int(threadIndex) == 0){
+        minDepthUint = 0xFFFFFFFFu;
+        maxDepthUint = 0u;
+        tileLightCountSphere = 0u;
+        tileLightCountCone = 0u;
+        tileLightBitMask = uvec4(0u);
+    }
+    memoryBarrierShared();
+    barrier();
+
+    if(depth != -1.0){
+        uint depthUint = floatBitsToUint(depth);
+        atomicMin(minDepthUint, depthUint);
+        atomicMax(maxDepthUint, depthUint);
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    float minDepth = uintBitsToFloat(minDepthUint);
+    float maxDepth = uintBitsToFloat(maxDepthUint);
+    float depthRange = max(maxDepth - minDepth, FLT_MIN);
+    float rcpDepthRange = 1.0 / depthRange;
+
+    vec2 tileScale = vec2(viewPort) * invTileDim;
+    vec3 tileBias = vec3(-2.0 * float(groupID.x) + tileScale.x - 1.0,
+        -2.0 * float(groupID.y) + tileScale.y - 1.0,
+        -minDepth * rcpDepthRange
+    );
+    mat4 projToTile = mat4(tileScale.x, 0.0, 0.0, tileBias.x,
+        0.0, tileScale.y, 0.0, tileBias.y,
+        0.0, 0.0, rcpDepthRange, tileBias.z,
+        0.0, 0.0, 0.0, 1.0
+    );
+    mat4 tileMVP = projToTile * viewProjMatrix;
+
+    // http://www8.cs.umu.se/kurser/5DV051/HT12/lab/plane_extraction.pdf
+    // construct frustum from vp matrix, it should be in view space plane
+    vec4 frustumPlanes[6];
+    frustumPlanes[0] = tileMVP[3] + tileMVP[0];
+    frustumPlanes[1] = tileMVP[3] - tileMVP[0];
+    frustumPlanes[2] = tileMVP[3] + tileMVP[1];
+    frustumPlanes[3] = tileMVP[3] - tileMVP[1];
+    frustumPlanes[4] = tileMVP[3]; // DX/Vulkan like only, ogl not
+    frustumPlanes[5] = tileMVP[3] - tileMVP[2];
+    for (int n = 0; n < 6; n++)
+    {
+        // normalize
+        frustumPlanes[n] *= 1.0 / sqrt(dot(frustumPlanes[n].xyz, frustumPlanes[n].xyz));
+    }
+
+    uint tileIndex = GetTileIndex(groupID, tileCountX);
+    uint tileOffset = GetTileOffset(tileIndex);
+    uint totalLightCount = min(lightBufferCount, uint(MAX_LIGHTS));
+
+    // per thread pre lightdata to find set of lights that overlap this tile
+    for(uint lightIndex = threadIndex; lightIndex < totalLightCount; lightIndex += groupSize){
+        LightBufferData lightData = ConvertLightBufferByte(lightBufferData[lightIndex].value);
+        switch(lightData.lightType){
+            case 0: // sphere
+            {
+                if(ShpereInFrustum(frustumPlanes, lightData)){
+                    uint slot = atomicAdd(tileLightCountSphere, 1u);
+                    tileLightIndicesSphere[slot] = lightIndex;
+                }
+                break;
+            }
+            case 1: // spot
+            {
+                if(SpotInFrustum(frustumPlanes, lightData)){
+                    uint slot = atomicAdd(tileLightCountCone, 1u);
+                    tileLightIndicesCone[slot] = lightIndex;
+                }
+                break;
+            }
+        }
+
+        switch (lightIndex >> 5) // divide 32
+        {
+            case 0:
+                atomicOr(tileLightBitMask.x, 1u << (lightIndex & 0x1fu));
+                break;
+            case 1:
+                atomicOr(tileLightBitMask.y, 1u << (lightIndex & 0x1fu));
+                break;
+            case 2:
+                atomicOr(tileLightBitMask.z, 1u << (lightIndex & 0x1fu));
+                break;
+            case 3:
+                atomicOr(tileLightBitMask.w, 1u << (lightIndex & 0x1fu));
+                break;
+        }
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    if(threadIndex == 0u){
+        uint lightCount = ((tileLightCountSphere & 0xffu) << 0) | ((tileLightCountCone & 0xffu) << 8);
+        lightGridData[tileOffset] = lightCount;
+        uint indexOffset = tileOffset + 4u;
+        for(uint i = 0u; i < tileLightCountSphere; ++i){
+            lightGridData[indexOffset] = tileLightIndicesSphere[i];
+            ++indexOffset;
+        }
+        for(uint i = 0u; i < tileLightCountCone; ++i){
+            lightGridData[indexOffset] = tileLightIndicesCone[i];
+            ++indexOffset;
+        }
+
+        lightGridBitMaskData[tileIndex] = tileLightBitMask.x;
+        lightGridBitMaskData[tileIndex + 1u] = tileLightBitMask.y;
+        lightGridBitMaskData[tileIndex + 2u] = tileLightBitMask.z;
+        lightGridBitMaskData[tileIndex + 3u] = tileLightBitMask.w;
+    }
+}
+
+void main(){
+    FillLightGrid(gl_GlobalInvocationID.xy, gl_WorkGroupID.xy, gl_LocalInvocationID.xy, gl_LocalInvocationIndex, gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z);
+}

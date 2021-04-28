@@ -200,6 +200,7 @@ class forward_plus : public vkb::VulkanSample
 	void prepare_resources();
 	void prepare_camera();
 	void prepare_pipelines();
+	void prepare_buffer();
 	void render(float delta_time);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
@@ -218,6 +219,8 @@ class forward_plus : public vkb::VulkanSample
 	bool                               supportBlit{false};
 	std::shared_ptr<vkb::core::Image>  linearDepthImage{nullptr};
 	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
+	std::shared_ptr<vkb::core::Buffer> lightGridBuffer{nullptr};
+	std::shared_ptr<vkb::core::Buffer> lightMaskBuffer{nullptr};
 	std::shared_ptr<vkb::core::Buffer> postProcessVB{nullptr};
 
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
