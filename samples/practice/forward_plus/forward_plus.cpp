@@ -36,9 +36,9 @@ bool forward_plus::prepare(Platform &platform)
 	}
 
 	prepare_resources();
+	prepare_buffer();
 	prepare_camera();
 	prepare_pipelines();
-
 	return true;
 }
 
@@ -270,6 +270,7 @@ void forward_plus::prepare_resources()
 		};
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
+		    {"light_grid", "forward_plus/light_grid.comp"},
 		};
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;

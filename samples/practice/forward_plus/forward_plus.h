@@ -201,6 +201,7 @@ class forward_plus : public vkb::VulkanSample
 	void prepare_camera();
 	void prepare_pipelines();
 	void prepare_buffer();
+	void prepare_light();
 	void render(float delta_time);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
