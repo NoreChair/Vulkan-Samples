@@ -12,6 +12,8 @@ using namespace vkb::core;
 
 std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>> forward_plus::ShaderProgram::shaderProgramPool = std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>>();
 
+std::unordered_map<size_t, ShaderSource> forward_plus::ShaderProgram::shaderSourcePool = std::unordered_map<size_t, ShaderSource>();
+
 const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::Image &&swapchain_image) -> std::unique_ptr<RenderTarget> {
 	VkFormat                 depth_format = get_suitable_depth_format(swapchain_image.get_device().get_gpu().get_handle());
 	std::vector<core::Image> images;
@@ -22,6 +24,7 @@ const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::I
 forward_plus::forward_plus()
 {
 	set_name(k_name);
+	//debugDepth = true;
 }
 
 forward_plus::~forward_plus()
@@ -37,6 +40,7 @@ bool forward_plus::prepare(Platform &platform)
 
 	prepare_resources();
 	prepare_buffer();
+	prepare_light();
 	prepare_camera();
 	prepare_pipelines();
 	return true;
@@ -52,46 +56,7 @@ void forward_plus::prepare_render_context()
 
 const std::vector<const char *> forward_plus::get_validation_layers()
 {
-	return {"VK_LAYER_LUNARG_standard_validation", "VK_LAYER_NV_nsight"};
-}
-
-void forward_plus::update(float delta_time)
-{
-	update_scene(delta_time);
-	//update_gui(delta_time);
-	render(delta_time);
-}
-
-void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)
-{
-	auto camera_transform = camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
-	auto meshes           = scene->get_components<sg::Mesh>();
-	for (auto &mesh : meshes)
-	{
-		for (auto &node : mesh->get_nodes())
-		{
-			auto node_transform = node->get_transform().get_world_matrix();
-
-			const sg::AABB &mesh_bounds = mesh->get_bounds();
-
-			sg::AABB world_bounds{mesh_bounds.get_min(), mesh_bounds.get_max()};
-			world_bounds.transform(node_transform);
-
-			float distance = glm::length(camera_transform - world_bounds.get_center());
-
-			for (auto &sub_mesh : mesh->get_submeshes())
-			{
-				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend)
-				{
-					transparent_nodes.emplace(distance, std::make_pair(node, sub_mesh));
-				}
-				else
-				{
-					opaque_nodes.emplace(distance, std::make_pair(node, sub_mesh));
-				}
-			}
-		}
-	}
+	return {"VK_LAYER_LUNARG_standard_validation"};
 }
 
 void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
@@ -112,7 +77,7 @@ void forward_plus::prepare_buffer()
 {
 	Device &refDevice = *device.get();
 	auto &  extent2d  = get_render_context().get_surface_extent();
-	int     tileCount = glm::ceil(extent2d.height / 8.0) * glm::ceil(extent2d.width / 8.0);
+	int     tileCount = (int) (glm::ceil(extent2d.height / 16.0f) * glm::ceil(extent2d.width / 16.0f));
 
 	lightBuffer     = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
 	lightGridBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * (MAX_LIGHTS_COUNT + 4) * tileCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
@@ -121,6 +86,87 @@ void forward_plus::prepare_buffer()
 
 	float fullScreenTriangle[] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
 	postProcessVB->update(&fullScreenTriangle, sizeof(float) * 9);
+}
+
+void forward_plus::prepare_light()
+{
+	auto &    sceneAABB = scene->get_root_node().get_component<sg::AABB>();
+	glm::vec3 posScale  = sceneAABB.get_max() - sceneAABB.get_min();
+	glm::vec3 posBias   = sceneAABB.get_min();
+
+	// todo: replace this with MT
+	srand(12645);
+	auto randUint = []() -> uint32_t {
+		return rand();        // [0, RAND_MAX]
+	};
+	auto randFloat = [randUint]() -> float {
+		return randUint() * (1.0f / RAND_MAX);        // convert [0, RAND_MAX] to [0, 1]
+	};
+	auto randVecUniform = [randFloat]() -> glm::vec3 {
+		return glm::vec3(randFloat(), randFloat(), randFloat());
+	};
+	auto randGaussian = [randFloat]() -> float {
+		// polar box-muller
+		static bool  gaussianPair = true;
+		static float y2;
+
+		if (gaussianPair)
+		{
+			gaussianPair = false;
+
+			float x1, x2, w;
+			do
+			{
+				x1 = 2 * randFloat() - 1;
+				x2 = 2 * randFloat() - 1;
+				w  = x1 * x1 + x2 * x2;
+			} while (w >= 1);
+
+			w  = sqrt(-2 * log(w) / w);
+			y2 = x2 * w;
+			return x1 * w;
+		}
+		else
+		{
+			gaussianPair = true;
+			return y2;
+		}
+	};
+	auto randVecGaussian = [randGaussian]() -> glm::vec3 {
+		return glm::normalize(glm::vec3(randGaussian(), randGaussian(), randGaussian()));
+	};
+
+	const float              pi = 3.14159265359f;
+	std::vector<LightBuffer> lightData(MAX_LIGHTS_COUNT);
+
+	for (uint32_t n = 0; n < MAX_LIGHTS_COUNT; n++)
+	{
+		glm::vec3 pos         = randVecUniform() * posScale + posBias;
+		float     lightRadius = randFloat() * 800.0f + 200.0f;
+
+		glm::vec3 color      = randVecUniform();
+		float     colorScale = randFloat() * .3f + .3f;
+		color                = color * colorScale;
+
+		uint32_t type = n < 32 * 2 ? 0 : 1;
+
+		glm::vec3 coneDir   = randVecGaussian();
+		float     coneInner = (randFloat() * .2f + .025f) * pi;
+		float     coneOuter = coneInner + randFloat() * .1f * pi;
+
+		lightData[n].position     = pos;
+		lightData[n].color        = color;
+		lightData[n].coneDir      = coneDir;
+		lightData[n].coneAngles.x = 1.0f / (cos(coneInner) - cos(coneOuter));
+		lightData[n].coneAngles.y = cos(coneOuter);
+		lightData[n].coneAngles.z = cos(coneOuter * 0.5f);
+		lightData[n].radius       = lightRadius;
+		lightData[n].intensity    = type == 1 ? 5.0f : 1.0f;
+		lightData[n].lightType    = type;
+		lightData[n].padding      = 0;
+	}
+
+	lightBuffer->update(&lightData[0], MAX_LIGHTS_COUNT * sizeof(LightBuffer));
 }
 
 void forward_plus::prepare_pipelines()
@@ -158,20 +204,22 @@ void forward_plus::prepare_pipelines()
 	DepthStencilState postProcessDepthState;        // depth test/write off
 	ColorBlendState   defaultColorState;
 	ColorBlendState   depthOnlyColorState;
+	ColorBlendState   blendColorState;
 	{
 		postProcessDepthState.depth_test_enable  = false;
 		postProcessDepthState.depth_write_enable = false;
 		postProcessDepthState.depth_compare_op   = VK_COMPARE_OP_ALWAYS;
 		ColorBlendAttachmentState defaultAttaState;
-		//ColorBlendAttachmentState blendAttaState;
-		//blendAttaState.blend_enable           = VK_TRUE;
-		//blendAttaState.src_color_blend_factor = blendAttaState.src_alpha_blend_factor = VK_BLEND_FACTOR_SRC_ALPHA;
-		//blendAttaState.dst_color_blend_factor = blendAttaState.dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		ColorBlendAttachmentState blendAttaState;
+		blendAttaState.blend_enable           = VK_TRUE;
+		blendAttaState.src_color_blend_factor = blendAttaState.src_alpha_blend_factor = VK_BLEND_FACTOR_SRC_ALPHA;
+		blendAttaState.dst_color_blend_factor = blendAttaState.dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		ColorBlendAttachmentState depthOnlyAttaState;
 		depthOnlyAttaState.color_write_mask = 0;
 
 		defaultColorState.attachments.push_back(defaultAttaState);
 		depthOnlyColorState.attachments.push_back(depthOnlyAttaState);
+		blendColorState.attachments.push_back(blendAttaState);
 	}
 
 	{
@@ -198,13 +246,12 @@ void forward_plus::prepare_pipelines()
 		PipelineState pipelineState;
 		pipelineState.set_pipeline_layout(*linearDepthPass.pipelineLayout);
 		refDevice.get_resource_cache().request_compute_pipeline(pipelineState);
-#if 0 
-		ShaderProgram * lightGridProgram = ShaderProgram::Find(std::string("light_grid"));
-		PipelineLayout &lightGridLayout  = refDevice.get_resource_cache().request_pipeline_layout(lightGridProgram->GetShaderModules());
-		PipelineState   lightGridState;
-		lightGridState.set_pipeline_layout(lightGridLayout);
+
+		ShaderProgram *lightGridProgram = ShaderProgram::Find(std::string("light_grid"));
+		lightGridPass.pipelineLayout    = &refDevice.get_resource_cache().request_pipeline_layout(lightGridProgram->GetShaderModules());
+		PipelineState lightGridState;
+		lightGridState.set_pipeline_layout(*lightGridPass.pipelineLayout);
 		refDevice.get_resource_cache().request_compute_pipeline(lightGridState);
-#endif
 	}
 
 	{
@@ -231,7 +278,7 @@ void forward_plus::prepare_pipelines()
 	{
 		std::vector<LoadStoreInfo> loadStoreInfos;
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
 
 		std::vector<SubpassInfo> subPassInfos;
 		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
@@ -239,9 +286,9 @@ void forward_plus::prepare_pipelines()
 		opaquePass.renderTarget = offScreenRT;
 		opaquePass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
 
-		//PipelineState*   opaqueRenderState = opaquePass.PushPipeline(refDevice, Opaque, std::string("pbr_base"));
-		//opaqueRenderState->set_depth_stencil_state(defaultDepthState);
-		//opaqueRenderState->set_color_blend_state(defaultColorState);
+		PipelineState *opaqueRenderState = opaquePass.PushPipeline(refDevice, Opaque, std::string("pbr_plus"));
+		opaqueRenderState->set_depth_stencil_state(defaultDepthState);
+		opaqueRenderState->set_color_blend_state(defaultColorState);
 	}
 }
 
@@ -263,9 +310,9 @@ void forward_plus::prepare_resources()
 			std::string computeName;
 		};
 
-		ShaderVariant                emptyVariant{};
 		std::vector<RProgramSources> shaderSourceFiles{
 		    {"depth_only", "forward_plus/depth_only.vert", "forward_plus/depth_only.frag"},
+		    {"pbr_plus", "forward_plus/pbr_plus.vert", "forward_plus/pbr_plus.frag"},
 		    {"debug_depth", "forward_plus/screen_base.vert", "forward_plus/debug_depth.frag"},
 		};
 		std::vector<CProgramSources> computeSourceFiles{
@@ -288,8 +335,8 @@ void forward_plus::prepare_resources()
 
 			auto &vsSource = shaderSources[shaderSourceFiles[i].vertexName];
 			auto &fsSource = shaderSources[shaderSourceFiles[i].fragmentName];
-			auto &shaderVS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource, emptyVariant);
-			auto &shaderFS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, emptyVariant);
+			auto &shaderVS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource);
+			auto &shaderFS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource);
 
 			std::initializer_list<ShaderModule *> initList{&shaderVS, &shaderFS};
 
@@ -300,16 +347,34 @@ void forward_plus::prepare_resources()
 		for (int i = 0; i < computeSourceFiles.size(); i++)
 		{
 			ShaderSource source(computeSourceFiles[i].computeName);
-			auto &       shaderCS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_COMPUTE_BIT, source, emptyVariant);
+			auto &       shaderCS = refDevice.get_resource_cache().request_shader_module(VK_SHADER_STAGE_COMPUTE_BIT, source);
 			auto         program  = std::make_shared<ShaderProgram>(&shaderCS);
 			ShaderProgram::AddShaderProgram(computeSourceFiles[i].programName, std::move(program));
 			shaderSources.emplace(std::make_pair(computeSourceFiles[i].computeName, std::move(source)));
+		}
+
+		for (auto iter = shaderSources.begin(); iter != shaderSources.end(); iter++)
+		{
+			ShaderProgram::AddShaderSource(std::move(iter->second));
 		}
 	}
 
 	{
 		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
 		load_scene("scenes/sponza/Sponza01.gltf");
+
+		if (!scene->get_root_node().has_component<sg::AABB>())
+		{
+			auto  sceneAABB = std::make_unique<sg::AABB>();
+			auto &meshs     = scene->get_components<sg::Mesh>();
+
+			for (size_t i = 0; i < meshs.size(); i++)
+			{
+				sceneAABB->update(meshs[i]->get_bounds().get_min());
+				sceneAABB->update(meshs[i]->get_bounds().get_max());
+			}
+			scene->add_component(std::move(sceneAABB), scene->get_root_node());
+		}
 	}
 }
 
@@ -328,7 +393,7 @@ void forward_plus::render(float delta_time)
 	get_sorted_nodes(opaqueNodes, transparentNodes);
 
 	// reverse z
-	std::vector<VkClearValue> clearValue{initializers::clear_color_value(1.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
+	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
 	VkExtent2D                extent  = get_render_context().get_surface_extent();
 	RenderContext &           context = get_render_context();
 
@@ -346,8 +411,9 @@ void forward_plus::render(float delta_time)
 			auto node    = iter->second.first;
 			auto submesh = iter->second.second;
 			update_global_uniform_buffers(commandBuffer, node);
-			bind_descriptor(commandBuffer, depthPrePass.pipelines.at(Opaque), submesh);
-			if (bind_vertex_input(commandBuffer, depthPrePass.pipelines.at(Opaque), submesh))
+			PipelineLayout &layout = const_cast<PipelineLayout &>(depthPrePass.pipelines.at(Opaque).get_pipeline_layout());
+			commandBuffer.bind_pipeline_layout(layout);
+			if (bind_vertex_input(commandBuffer, layout, submesh))
 			{
 				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
 			}
@@ -378,12 +444,12 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 
+		PipelineState defaultState;
+		bind_pipeline_state(commandBuffer, defaultState);
 		commandBuffer.bind_pipeline_layout(*linearDepthPass.pipelineLayout);
-		const auto &descLayout = linearDepthPass.pipelineLayout->get_descriptor_set_layout(0);
 		commandBuffer.bind_input(depthView, 0, 0, 0);
 		commandBuffer.bind_input(*linearDepthImageView, 0, 1, 0);
 
-		VkExtent3D extent = linearDepthImage->get_extent();
 		struct
 		{
 			float    nearPlane;
@@ -399,11 +465,65 @@ void forward_plus::render(float delta_time)
 	}
 
 	{
+		vkb::ImageMemoryBarrier barrier{};
+		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
+		commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
+
+		BufferMemoryBarrier bufferBarrier{};
+		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
+		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+
+		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
+		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+
+		VkExtent2D    dispatchCount = {(uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f)};
+		PipelineState defaultState;
+		bind_pipeline_state(commandBuffer, defaultState);
+		commandBuffer.bind_pipeline_layout(*lightGridPass.pipelineLayout);
+
+		struct
+		{
+			glm::mat4  viewProj;
+			VkExtent2D viewport;
+			uint32_t   tileCountX;
+			uint32_t   lightBufferCount;
+			float      invTileDim;
+		} uniforms{
+		    vkb::vulkan_style_projection(camera->get_projection()) * camera->get_view(),
+		    extent,
+		    dispatchCount.width,
+		    MAX_LIGHTS_COUNT,
+		    1.0f / 16.0f};
+		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
+		allocation.update(uniforms);
+		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
+		commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 1, 0);
+		commandBuffer.bind_buffer(*lightGridBuffer, 0, lightGridBuffer->get_size(), 0, 2, 0);
+		commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 3, 0);
+		commandBuffer.bind_image(*linearDepthImageView, 0, 4, 0);
+		commandBuffer.dispatch(dispatchCount.width, dispatchCount.height, 1);
+
+		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+
+		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
+		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+	}
+
+	{
 		//
 		ImageMemoryBarrier barrier{};
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
 		barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -416,16 +536,49 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 	}
-
+	//debugDepth = true;
+	if (debugDepth)
 	{
 		// show linear depth pass
 		commandBuffer.begin_render_pass(debugDepthPass.GetRenderTarget(), debugDepthPass.GetRenderPass(), debugDepthPass.GetFrameBuffer(), clearValue);
 		bind_pipeline_state(commandBuffer, debugDepthPass.pipelines[PostProcess]);
-		bind_descriptor(commandBuffer, debugDepthPass.pipelines[PostProcess]);
+		const PipelineLayout &layout = debugDepthPass.pipelines[PostProcess].get_pipeline_layout();
+		commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(layout));
 		commandBuffer.bind_image(*linearDepthImageView, *linearClampSampler, 0, 0, 0);
 		commandBuffer.set_vertex_input_state(debugDepthPass.pipelines[PostProcess].get_vertex_input_state());
 		commandBuffer.bind_vertex_buffers(0, {*postProcessVB}, {0});
 		commandBuffer.draw(3, 1, 0, 0);
+		commandBuffer.end_render_pass();
+	}
+	else
+	{
+		commandBuffer.begin_render_pass(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass(), opaquePass.GetFrameBuffer(), clearValue);
+		bind_pipeline_state(commandBuffer, opaquePass.pipelines[Opaque]);
+		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
+		{
+			auto  node     = iter->second.first;
+			auto  submesh  = iter->second.second;
+			auto  variant  = submesh->get_shader_variant();
+			auto &vsSource = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
+			auto &fsSource = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
+
+			std::vector<ShaderModule *> modules;
+			modules.push_back(&device->get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource, variant));
+			modules.push_back(&device->get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, variant));
+
+			PipelineLayout &layout = device->get_resource_cache().request_pipeline_layout(modules);
+			commandBuffer.bind_pipeline_layout(layout);
+			update_global_uniform_buffers(commandBuffer, node);
+			bind_pbr_descriptor(commandBuffer, layout, submesh);
+			if (bind_vertex_input(commandBuffer, layout, submesh))
+			{
+				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
+			}
+			else
+			{
+				commandBuffer.draw(submesh->vertices_count, 1, 0, 0);
+			}
+		}
 		commandBuffer.end_render_pass();
 	}
 
@@ -458,58 +611,61 @@ void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::P
 	commandBuffer.set_multisample_state(pipeline.get_multisample_state());
 }
 
-void forward_plus::bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh, bool bindMaterial)
+void forward_plus::bind_pbr_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh)
 {
-	const PipelineLayout &layout = pipeline.get_pipeline_layout();
-	commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(layout));
-	auto &constantState = pipeline.get_specialization_constant_state().get_specialization_constant_state();
-	for (auto iter = constantState.begin(); iter != constantState.end(); ++iter)
+	VkExtent2D extent = get_render_context().get_surface_extent();
+	struct
 	{
-		commandBuffer.set_specialization_constant(iter->first, iter->second);
+		glm::vec4 direction_light;
+		glm::vec4 direction_light_color;
+		float     inv_tile_dim;
+		uint32_t  tile_count_x;
+	} lightInfos{sunDirection, sunColor, 1.0f / 16.0f, (uint32_t) glm::ceil(extent.width / 16.0f)};
+
+	auto &render_frame = get_render_context().get_active_frame();
+	auto  allocation   = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(lightInfos), 0);
+	allocation.update(lightInfos);
+	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 1, 0);
+
+	commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 2, 0);
+	commandBuffer.bind_buffer(*lightGridBuffer, 0, lightGridBuffer->get_size(), 0, 3, 0);
+	commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 4, 0);
+
+	DescriptorSetLayout &descriptorSetLayout = pipelineLayout.get_descriptor_set_layout(1);
+	for (auto &texture : submesh->get_material()->textures)
+	{
+		auto layoutBinding = descriptorSetLayout.get_layout_binding(texture.first);
+		if (layoutBinding != nullptr)
+		{
+			commandBuffer.bind_image(texture.second->get_image()->get_vk_image_view(),
+			                         texture.second->get_sampler()->vk_sampler,
+			                         1, layoutBinding->binding, 0);
+		}
 	}
 
-	if (bindMaterial && submesh)
+	struct MaterialUniform
 	{
-		DescriptorSetLayout &descriptorSetLayout = layout.get_descriptor_set_layout(0);
+		glm::vec4 base_color_factor;
+		float     metallic_factor;
+		float     roughness_factor;
+	};
+	auto            pbr_material = dynamic_cast<const sg::PBRMaterial *>(submesh->get_material());
+	MaterialUniform material_uniform{};
+	material_uniform.base_color_factor = pbr_material->base_color_factor;
+	material_uniform.metallic_factor   = pbr_material->metallic_factor;
+	material_uniform.roughness_factor  = pbr_material->roughness_factor;
 
-		for (auto &texture : submesh->get_material()->textures)
-		{
-			auto layoutBinding = descriptorSetLayout.get_layout_binding(texture.first);
-			if (layoutBinding != nullptr)
-			{
-				commandBuffer.bind_image(texture.second->get_image()->get_vk_image_view(),
-				                         texture.second->get_sampler()->vk_sampler,
-				                         0, layoutBinding->binding, 0);
-			}
-		}
+	auto data = to_bytes(material_uniform);
 
-		struct PBRMaterialUniform
-		{
-			glm::vec4 base_color_factor;
-
-			float metallic_factor;
-
-			float roughness_factor;
-		};
-		auto               pbr_material = dynamic_cast<const sg::PBRMaterial *>(submesh->get_material());
-		PBRMaterialUniform pbr_material_uniform{};
-		pbr_material_uniform.base_color_factor = pbr_material->base_color_factor;
-		pbr_material_uniform.metallic_factor   = pbr_material->metallic_factor;
-		pbr_material_uniform.roughness_factor  = pbr_material->roughness_factor;
-
-		auto data = to_bytes(pbr_material_uniform);
-
-		if (!data.empty())
-		{
-			commandBuffer.push_constants(data);
-		}
+	if (!data.empty())
+	{
+		commandBuffer.push_constants(data);
 	}
 }
 
-bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh)
+bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh)
 {
-	auto &pipelineLayout         = pipeline.get_pipeline_layout();
-	auto  vertex_input_resources = pipelineLayout.get_resources(ShaderResourceType::Input, VK_SHADER_STAGE_VERTEX_BIT);
+	auto vertex_input_resources = pipelineLayout.get_resources(ShaderResourceType::Input, VK_SHADER_STAGE_VERTEX_BIT);
 
 	VertexInputState vertex_input_state;
 
@@ -615,6 +771,45 @@ void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer)
 	barrier.old_layout      = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	barrier.new_layout      = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	commandBuffer.image_memory_barrier(swapChainView, barrier);
+}
+
+void forward_plus::update(float delta_time)
+{
+	update_scene(delta_time);
+	//update_gui(delta_time);
+	render(delta_time);
+}
+
+void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)
+{
+	auto camera_transform = camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
+	auto meshes           = scene->get_components<sg::Mesh>();
+	for (auto &mesh : meshes)
+	{
+		for (auto &node : mesh->get_nodes())
+		{
+			auto node_transform = node->get_transform().get_world_matrix();
+
+			const sg::AABB &mesh_bounds = mesh->get_bounds();
+
+			sg::AABB world_bounds{mesh_bounds.get_min(), mesh_bounds.get_max()};
+			world_bounds.transform(node_transform);
+
+			float distance = glm::length(camera_transform - world_bounds.get_center());
+
+			for (auto &sub_mesh : mesh->get_submeshes())
+			{
+				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend)
+				{
+					transparent_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+				}
+				else
+				{
+					opaque_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+				}
+			}
+		}
+	}
 }
 
 void forward_plus::input_event(const vkb::InputEvent &input_event)

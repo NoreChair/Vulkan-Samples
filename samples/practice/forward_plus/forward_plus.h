@@ -4,6 +4,7 @@
 #pragma once
 
 #include "common/vk_common.h"
+#include "core/shader_module.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
 #include "vulkan_sample.h"
@@ -44,11 +45,14 @@ class forward_plus : public vkb::VulkanSample
 
 	struct LightBuffer
 	{
-		glm::vec4 pos;          // pos and radius
-		glm::vec4 color;        // color and intensity
-		glm::vec4 coneDir;
-		glm::vec2 coneAngle;
-		uint32_t  type;
+		glm::vec3 position;          // xyz=pos
+		glm::vec3 color;             // xyz=rgb
+		glm::vec3 coneDir;           // xyz=direction if light source is spot
+		glm::vec3 coneAngles;        // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z=cos(outer/2)
+		float     radius;
+		float     intensity;
+		uint32_t  lightType;
+		uint32_t  padding;
 	};
 
 	struct RenderPassEntry
@@ -176,8 +180,38 @@ class forward_plus : public vkb::VulkanSample
 			return nullptr;
 		}
 
+		static const vkb::ShaderSource &FindShaderSource(size_t uid)
+		{
+			auto iter = shaderSourcePool.find(uid);
+			if (iter != shaderSourcePool.end())
+			{
+				return iter->second;
+			}
+			throw std::runtime_error("Can't find shader with UID : " + uid);
+		}
+
+		static const vkb::ShaderSource &FindShaderSource(std::string &name)
+		{
+			size_t uid  = std::hash<std::string>{}(name);
+			auto   iter = shaderSourcePool.find(uid);
+			if (iter != shaderSourcePool.end())
+			{
+				return iter->second;
+			}
+			throw std::runtime_error("Can't find shader with name : " + name);
+		}
+
+		static size_t AddShaderSource(vkb::ShaderSource &&shaderSource)
+		{
+			size_t uid = std::hash<std::string>{}(shaderSource.get_filename());
+			DEBUG_ASSERT(shaderSourcePool.find(uid) == shaderSourcePool.end(), "Shader source uid collision");
+			shaderSourcePool.emplace(uid, std::move(shaderSource));
+			return uid;
+		}
+
 	  private:
 		static std::unordered_map<size_t, std::shared_ptr<ShaderProgram>> shaderProgramPool;
+		static std::unordered_map<size_t, vkb::ShaderSource>              shaderSourcePool;
 		VkShaderStageFlagBits                                             programStageFlag;
 		std::vector<vkb::ShaderModule *>                                  shaderModules;
 	};
@@ -205,8 +239,8 @@ class forward_plus : public vkb::VulkanSample
 	void render(float delta_time);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
-	void bind_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh = nullptr, bool bindMaterial = false);
-	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline, vkb::sg::SubMesh *submesh = nullptr);
+	void bind_pbr_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh);
+	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh = nullptr);
 	void blit_and_present(vkb::CommandBuffer &commandBuffer);
 	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
 
@@ -217,7 +251,12 @@ class forward_plus : public vkb::VulkanSample
 	vkb::sg::Camera *camera{nullptr};
 
 	/*                            Rendering                        */
-	bool                               supportBlit{false};
+	bool debugDepth{false};
+	bool supportBlit{false};
+
+	glm::vec4 sunDirection = glm::normalize(glm::vec4(-1.0, -1.0, 0.0, 0.0));
+	glm::vec4 sunColor     = glm::vec4(1.0, 1.0, 1.0, 1.0);
+
 	std::shared_ptr<vkb::core::Image>  linearDepthImage{nullptr};
 	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
 	std::shared_ptr<vkb::core::Buffer> lightGridBuffer{nullptr};
