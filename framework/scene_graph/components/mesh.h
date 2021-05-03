@@ -40,6 +40,8 @@ class Mesh : public Component
 
 	void update_bounds(const std::vector<glm::vec3> &vertex_data, const std::vector<uint16_t> &index_data = {});
 
+    void update_bounds(const glm::vec3& point);
+
 	virtual std::type_index get_type() override;
 
 	const AABB &get_bounds() const;

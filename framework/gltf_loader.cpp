@@ -631,6 +631,16 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 				if (attrib_name == "position")
 				{
 					submesh->vertices_count = to_u32(model.accessors.at(attribute.second).count);
+
+					glm::vec3 vertex;
+					float *   p_vertex = (float *) &vertex_data[0];
+					for (size_t i = 0; i < submesh->vertices_count; i++)
+					{
+						vertex.x = *(p_vertex++);
+						vertex.y = *(p_vertex++);
+						vertex.z = *(p_vertex++);
+						mesh->update_bounds(vertex);
+					}
 				}
 
 				core::Buffer buffer{device,

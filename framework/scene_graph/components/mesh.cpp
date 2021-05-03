@@ -30,6 +30,10 @@ void Mesh::update_bounds(const std::vector<glm::vec3> &vertex_data, const std::v
 	bounds.update(vertex_data, index_data);
 }
 
+void Mesh::update_bounds(const glm::vec3& point) {
+    bounds.update(point);
+}
+
 std::type_index Mesh::get_type()
 {
 	return typeid(Mesh);
