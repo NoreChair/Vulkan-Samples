@@ -19,14 +19,14 @@ struct LightBufferData{
     // float4x4 shadowTextureMatrix;
 };
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform LightGridUniforms {
+    mat4 viewProjMatrix;
     uvec2 viewPort;
-    float invTileDim;
     uint tileCountX;
     uint lightBufferCount;
-    mat4 viewProjMatrix;
+    float invTileDim;
 };
 
 // for performance reason, data best align with 128-bit
@@ -180,12 +180,14 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     // per thread pre lightdata to find set of lights that overlap this tile
     for(uint lightIndex = threadIndex; lightIndex < totalLightCount; lightIndex += groupSize){
         LightBufferData lightData = ConvertLightBufferByte(lightBufferData[lightIndex].value);
+        bool overlap = false;
         switch(lightData.lightType){
             case 0: // sphere
             {
                 if(ShpereInFrustum(frustumPlanes, lightData)){
                     uint slot = atomicAdd(tileLightCountSphere, 1u);
                     tileLightIndicesSphere[slot] = lightIndex;
+                    overlap = true;
                 }
                 break;
             }
@@ -194,25 +196,27 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
                 if(SpotInFrustum(frustumPlanes, lightData)){
                     uint slot = atomicAdd(tileLightCountCone, 1u);
                     tileLightIndicesCone[slot] = lightIndex;
+                    overlap = true;
                 }
                 break;
             }
         }
-
-        switch (lightIndex >> 5) // divide 32
-        {
-            case 0:
-                atomicOr(tileLightBitMask.x, 1u << (lightIndex & 0x1fu));
-                break;
-            case 1:
-                atomicOr(tileLightBitMask.y, 1u << (lightIndex & 0x1fu));
-                break;
-            case 2:
-                atomicOr(tileLightBitMask.z, 1u << (lightIndex & 0x1fu));
-                break;
-            case 3:
-                atomicOr(tileLightBitMask.w, 1u << (lightIndex & 0x1fu));
-                break;
+        if(overlap){
+            switch (lightIndex / 32u) // divide 32
+            {
+                case 0:
+                    atomicOr(tileLightBitMask.x, 1u << (lightIndex % 32u));
+                    break;
+                case 1:
+                    atomicOr(tileLightBitMask.y, 1u << (lightIndex % 32u));
+                    break;
+                case 2:
+                    atomicOr(tileLightBitMask.z, 1u << (lightIndex % 32u));
+                    break;
+                case 3:
+                    atomicOr(tileLightBitMask.w, 1u << (lightIndex % 32u));
+                    break;
+            }
         }
     }
 
@@ -220,25 +224,24 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     barrier();
 
     if(threadIndex == 0u){
-        uint lightCount = ((tileLightCountSphere & 0xffu) << 0) | ((tileLightCountCone & 0xffu) << 8);
-        lightGridData[tileOffset] = lightCount;
+        lightGridData[tileOffset]      = tileLightCountSphere;
+        lightGridData[tileOffset + 1u] = tileLightCountCone;
+
         uint indexOffset = tileOffset + 4u;
         for(uint i = 0u; i < tileLightCountSphere; ++i){
-            lightGridData[indexOffset] = tileLightIndicesSphere[i];
-            ++indexOffset;
+            lightGridData[indexOffset + i] = tileLightIndicesSphere[i];
         }
         for(uint i = 0u; i < tileLightCountCone; ++i){
-            lightGridData[indexOffset] = tileLightIndicesCone[i];
-            ++indexOffset;
+            lightGridData[indexOffset + tileLightCountSphere + i] = tileLightIndicesCone[i];
         }
 
-        lightGridBitMaskData[tileIndex] = tileLightBitMask.x;
-        lightGridBitMaskData[tileIndex + 1u] = tileLightBitMask.y;
-        lightGridBitMaskData[tileIndex + 2u] = tileLightBitMask.z;
-        lightGridBitMaskData[tileIndex + 3u] = tileLightBitMask.w;
+        lightGridBitMaskData[tileIndex * 4u] = tileLightBitMask.x;
+        lightGridBitMaskData[tileIndex * 4u + 1u] = tileLightBitMask.y;
+        lightGridBitMaskData[tileIndex * 4u + 2u] = tileLightBitMask.z;
+        lightGridBitMaskData[tileIndex * 4u + 3u] = tileLightBitMask.w;
     }
 }
 
 void main(){
-    FillLightGrid(gl_GlobalInvocationID.xy, gl_WorkGroupID.xy, gl_LocalInvocationID.xy, gl_LocalInvocationIndex, gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z);
+    FillLightGrid(gl_GlobalInvocationID.xy, gl_WorkGroupID.xy, gl_LocalInvocationID.xy, gl_LocalInvocationIndex, 16u * 16u * 1u);
 }
