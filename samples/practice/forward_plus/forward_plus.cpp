@@ -224,20 +224,10 @@ void forward_plus::prepare_pipelines()
 	}
 
 	{
-		// Dpeth Pre Pass
-		std::vector<LoadStoreInfo> loadStoreInfos;
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-
-		std::vector<SubpassInfo> subPassInfos;
-		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-
-		depthPrePass.renderTarget = offScreenRT;
-		depthPrePass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
-
-		PipelineState *depthOnlyPipelineState = depthPrePass.PushPipeline(refDevice, Opaque, std::string("depth_only"));
-		depthOnlyPipelineState->set_depth_stencil_state(defaultDepthState);
-		depthOnlyPipelineState->set_color_blend_state(depthOnlyColorState);
+		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
+		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
+		depthPrePass    = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
+		depthPrePass->prepare(camera, offScreenRT.get());
 	}
 
 	{
@@ -395,30 +385,10 @@ void forward_plus::render(float delta_time)
 
 	// depth pre pass
 	{
-		commandBuffer.begin_render_pass(depthPrePass.GetRenderTarget(), depthPrePass.GetRenderPass(), depthPrePass.GetFrameBuffer(), clearValue);
-		// update and bind buffer
-		bind_pipeline_state(commandBuffer, depthPrePass.pipelines.at(Opaque));
-		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
-		{
-			auto node    = iter->second.first;
-			auto submesh = iter->second.second;
-			update_global_uniform_buffers(commandBuffer, node);
-			PipelineLayout &layout = const_cast<PipelineLayout &>(depthPrePass.pipelines.at(Opaque).get_pipeline_layout());
-			commandBuffer.bind_pipeline_layout(layout);
-			if (bind_vertex_input(commandBuffer, layout, submesh))
-			{
-				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
-			}
-			else
-			{
-				commandBuffer.draw(submesh->vertices_count, 1, 0, 0);
-			}
-		}
-
-		commandBuffer.end_render_pass();
+		depthPrePass->draw(commandBuffer, opaqueNodes);
 	}
 
-	const ImageView &depthView = depthPrePass.GetRenderTarget().get_views()[1];
+	const ImageView &depthView = offScreenRT->get_views()[1];
 	{
 		// linear depth
 		vkb::ImageMemoryBarrier barrier{};

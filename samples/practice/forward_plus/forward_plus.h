@@ -5,6 +5,7 @@
 
 #include "common/vk_common.h"
 #include "core/shader_module.h"
+#include "depth_only_pass.h"
 #include "opaque_pass.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
@@ -244,11 +245,11 @@ class forward_plus : public vkb::VulkanSample
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
 	std::shared_ptr<vkb::core::Sampler>   linearClampSampler{nullptr};
 
-	RenderPassEntry              depthPrePass{};
-	ComputePassEntry             linearDepthPass{};
-	ComputePassEntry             lightGridPass{};
-	RenderPassEntry              debugDepthPass{};
-	std::unique_ptr<opaque_pass> opaquePass{nullptr};
+	ComputePassEntry                 linearDepthPass{};
+	ComputePassEntry                 lightGridPass{};
+	RenderPassEntry                  debugDepthPass{};
+	std::unique_ptr<depth_only_pass> depthPrePass{nullptr};
+	std::unique_ptr<opaque_pass>     opaquePass{nullptr};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
