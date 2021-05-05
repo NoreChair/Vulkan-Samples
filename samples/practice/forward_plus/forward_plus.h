@@ -5,6 +5,7 @@
 
 #include "common/vk_common.h"
 #include "core/shader_module.h"
+#include "opaque_pass.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
 #include "vulkan_sample.h"
@@ -34,25 +35,6 @@ class forward_plus : public vkb::VulkanSample
 		Opaque,
 		AlphaBlend,
 		PostProcess
-	};
-
-	struct alignas(16) GlobalUniform
-	{
-		glm::mat4 model;
-		glm::mat4 view_project;
-		glm::vec3 camera_position;
-	};
-
-	struct LightBuffer
-	{
-		glm::vec3 position;          // xyz=pos
-		glm::vec3 color;             // xyz=rgb
-		glm::vec3 coneDir;           // xyz=direction if light source is spot
-		glm::vec3 coneAngles;        // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z=cos(outer/2)
-		float     radius;
-		float     intensity;
-		uint32_t  lightType;
-		uint32_t  padding;
 	};
 
 	struct RenderPassEntry
@@ -180,7 +162,7 @@ class forward_plus : public vkb::VulkanSample
 			return nullptr;
 		}
 
-		static const vkb::ShaderSource &FindShaderSource(size_t uid)
+		static vkb::ShaderSource &FindShaderSource(size_t uid)
 		{
 			auto iter = shaderSourcePool.find(uid);
 			if (iter != shaderSourcePool.end())
@@ -190,7 +172,7 @@ class forward_plus : public vkb::VulkanSample
 			throw std::runtime_error("Can't find shader with UID : " + uid);
 		}
 
-		static const vkb::ShaderSource &FindShaderSource(std::string &name)
+		static vkb::ShaderSource &FindShaderSource(std::string &name)
 		{
 			size_t uid  = std::hash<std::string>{}(name);
 			auto   iter = shaderSourcePool.find(uid);
@@ -239,7 +221,6 @@ class forward_plus : public vkb::VulkanSample
 	void render(float delta_time);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
-	void bind_pbr_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh);
 	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh = nullptr);
 	void blit_and_present(vkb::CommandBuffer &commandBuffer);
 	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
@@ -254,24 +235,20 @@ class forward_plus : public vkb::VulkanSample
 	bool debugDepth{false};
 	bool supportBlit{false};
 
-	glm::vec4 sunDirection = glm::normalize(glm::vec4(-1.0, -1.0, 0.0, 0.0));
-	glm::vec4 sunColor     = glm::vec4(1.0, 1.0, 1.0, 1.0);
-
-	std::shared_ptr<vkb::core::Image>  linearDepthImage{nullptr};
-	std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
-	std::shared_ptr<vkb::core::Buffer> lightGridBuffer{nullptr};
-	std::shared_ptr<vkb::core::Buffer> lightMaskBuffer{nullptr};
-	std::shared_ptr<vkb::core::Buffer> postProcessVB{nullptr};
-
+	std::shared_ptr<vkb::core::Image>     linearDepthImage{nullptr};
+	std::shared_ptr<vkb::core::Buffer>    lightBuffer{nullptr};
+	std::shared_ptr<vkb::core::Buffer>    lightGridBuffer{nullptr};
+	std::shared_ptr<vkb::core::Buffer>    lightMaskBuffer{nullptr};
+	std::shared_ptr<vkb::core::Buffer>    postProcessVB{nullptr};
+	std::shared_ptr<vkb::RenderTarget>    offScreenRT{nullptr};
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
+	std::shared_ptr<vkb::core::Sampler>   linearClampSampler{nullptr};
 
-	std::shared_ptr<vkb::core::Sampler> linearClampSampler{nullptr};
-
-	RenderPassEntry  depthPrePass{};
-	ComputePassEntry linearDepthPass{};
-	ComputePassEntry lightGridPass{};
-	RenderPassEntry  debugDepthPass{};
-	RenderPassEntry  opaquePass{};
+	RenderPassEntry              depthPrePass{};
+	ComputePassEntry             linearDepthPass{};
+	ComputePassEntry             lightGridPass{};
+	RenderPassEntry              debugDepthPass{};
+	std::unique_ptr<opaque_pass> opaquePass{nullptr};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();

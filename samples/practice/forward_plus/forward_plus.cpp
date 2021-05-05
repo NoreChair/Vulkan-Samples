@@ -1,4 +1,5 @@
 #include "forward_plus.h"
+#include "Utils.h"
 #include "api_vulkan_sample.h"
 #include "gltf_loader.h"
 #include "scene_graph/components/material.h"
@@ -198,7 +199,7 @@ void forward_plus::prepare_pipelines()
 	std::vector<Image> offScreenFBO;
 	offScreenFBO.emplace_back(std::move(colorImage));
 	offScreenFBO.emplace_back(std::move(depthImage));
-	auto offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenFBO));
+	offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenFBO));
 
 	DepthStencilState defaultDepthState;            // depth test/write on
 	DepthStencilState postProcessDepthState;        // depth test/write off
@@ -276,19 +277,10 @@ void forward_plus::prepare_pipelines()
 
 	// opaque render
 	{
-		std::vector<LoadStoreInfo> loadStoreInfos;
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
-
-		std::vector<SubpassInfo> subPassInfos;
-		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-
-		opaquePass.renderTarget = offScreenRT;
-		opaquePass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
-
-		PipelineState *opaqueRenderState = opaquePass.PushPipeline(refDevice, Opaque, std::string("pbr_plus"));
-		opaqueRenderState->set_depth_stencil_state(defaultDepthState);
-		opaqueRenderState->set_color_blend_state(defaultColorState);
+		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
+		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
+		opaquePass      = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs));
+		opaquePass->prepare(camera, offScreenRT.get());
 	}
 }
 
@@ -552,34 +544,8 @@ void forward_plus::render(float delta_time)
 	}
 	else
 	{
-		commandBuffer.begin_render_pass(opaquePass.GetRenderTarget(), opaquePass.GetRenderPass(), opaquePass.GetFrameBuffer(), clearValue);
-		bind_pipeline_state(commandBuffer, opaquePass.pipelines[Opaque]);
-		for (auto iter = opaqueNodes.begin(); iter != opaqueNodes.end(); iter++)
-		{
-			auto  node     = iter->second.first;
-			auto  submesh  = iter->second.second;
-			auto  variant  = submesh->get_shader_variant();
-			auto &vsSource = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
-			auto &fsSource = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
-
-			std::vector<ShaderModule *> modules;
-			modules.push_back(&device->get_resource_cache().request_shader_module(VK_SHADER_STAGE_VERTEX_BIT, vsSource, variant));
-			modules.push_back(&device->get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, fsSource, variant));
-
-			PipelineLayout &layout = device->get_resource_cache().request_pipeline_layout(modules);
-			commandBuffer.bind_pipeline_layout(layout);
-			update_global_uniform_buffers(commandBuffer, node);
-			bind_pbr_descriptor(commandBuffer, layout, submesh);
-			if (bind_vertex_input(commandBuffer, layout, submesh))
-			{
-				commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
-			}
-			else
-			{
-				commandBuffer.draw(submesh->vertices_count, 1, 0, 0);
-			}
-		}
-		commandBuffer.end_render_pass();
+		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get());
+		opaquePass->draw(commandBuffer, opaqueNodes);
 	}
 
 	blit_and_present(commandBuffer);
@@ -609,58 +575,6 @@ void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::P
 	commandBuffer.set_rasterization_state(pipeline.get_rasterization_state());
 	commandBuffer.set_viewport_state(pipeline.get_viewport_state());
 	commandBuffer.set_multisample_state(pipeline.get_multisample_state());
-}
-
-void forward_plus::bind_pbr_descriptor(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh)
-{
-	VkExtent2D extent = get_render_context().get_surface_extent();
-	struct
-	{
-		glm::vec4 direction_light;
-		glm::vec4 direction_light_color;
-		float     inv_tile_dim;
-		uint32_t  tile_count_x;
-	} lightInfos{sunDirection, sunColor, 1.0f / 16.0f, (uint32_t) glm::ceil(extent.width / 16.0f)};
-
-	auto &render_frame = get_render_context().get_active_frame();
-	auto  allocation   = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(lightInfos), 0);
-	allocation.update(lightInfos);
-	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 1, 0);
-
-	commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 2, 0);
-	commandBuffer.bind_buffer(*lightGridBuffer, 0, lightGridBuffer->get_size(), 0, 3, 0);
-	commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 4, 0);
-
-	DescriptorSetLayout &descriptorSetLayout = pipelineLayout.get_descriptor_set_layout(1);
-	for (auto &texture : submesh->get_material()->textures)
-	{
-		auto layoutBinding = descriptorSetLayout.get_layout_binding(texture.first);
-		if (layoutBinding != nullptr)
-		{
-			commandBuffer.bind_image(texture.second->get_image()->get_vk_image_view(),
-			                         texture.second->get_sampler()->vk_sampler,
-			                         1, layoutBinding->binding, 0);
-		}
-	}
-
-	struct MaterialUniform
-	{
-		glm::vec4 base_color_factor;
-		float     metallic_factor;
-		float     roughness_factor;
-	};
-	auto            pbr_material = dynamic_cast<const sg::PBRMaterial *>(submesh->get_material());
-	MaterialUniform material_uniform{};
-	material_uniform.base_color_factor = pbr_material->base_color_factor;
-	material_uniform.metallic_factor   = pbr_material->metallic_factor;
-	material_uniform.roughness_factor  = pbr_material->roughness_factor;
-
-	auto data = to_bytes(material_uniform);
-
-	if (!data.empty())
-	{
-		commandBuffer.push_constants(data);
-	}
 }
 
 bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh)
@@ -722,7 +636,7 @@ bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::Pip
 
 void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer)
 {
-	auto &colorImageView = opaquePass.GetRenderTarget().get_views()[0];
+	auto &colorImageView = offScreenRT->get_views()[0];
 	auto &swapChainView  = render_context->get_active_frame().get_render_target().get_views()[0];
 
 	ImageMemoryBarrier barrier{};
