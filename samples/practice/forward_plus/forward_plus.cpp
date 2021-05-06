@@ -178,17 +178,6 @@ void forward_plus::prepare_pipelines()
 
 	Device &refDevice = *device.get();
 
-	auto samplerCreateInfo         = initializers::sampler_create_info();
-	samplerCreateInfo.magFilter    = VK_FILTER_LINEAR;
-	samplerCreateInfo.minFilter    = VK_FILTER_LINEAR;
-	samplerCreateInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-	samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	samplerCreateInfo.minLod       = 0;
-	samplerCreateInfo.maxLod       = VK_LOD_CLAMP_NONE;
-	linearClampSampler             = std::make_shared<Sampler>(refDevice, samplerCreateInfo);
-
 	// Create Render Image
 	VkExtent3D extent{windowWidth, windowHeight, 1};
 	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
@@ -196,32 +185,10 @@ void forward_plus::prepare_pipelines()
 	linearDepthImage     = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
 
-	std::vector<Image> offScreenFBO;
-	offScreenFBO.emplace_back(std::move(colorImage));
-	offScreenFBO.emplace_back(std::move(depthImage));
-	offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenFBO));
-
-	DepthStencilState defaultDepthState;            // depth test/write on
-	DepthStencilState postProcessDepthState;        // depth test/write off
-	ColorBlendState   defaultColorState;
-	ColorBlendState   depthOnlyColorState;
-	ColorBlendState   blendColorState;
-	{
-		postProcessDepthState.depth_test_enable  = false;
-		postProcessDepthState.depth_write_enable = false;
-		postProcessDepthState.depth_compare_op   = VK_COMPARE_OP_ALWAYS;
-		ColorBlendAttachmentState defaultAttaState;
-		ColorBlendAttachmentState blendAttaState;
-		blendAttaState.blend_enable           = VK_TRUE;
-		blendAttaState.src_color_blend_factor = blendAttaState.src_alpha_blend_factor = VK_BLEND_FACTOR_SRC_ALPHA;
-		blendAttaState.dst_color_blend_factor = blendAttaState.dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-		ColorBlendAttachmentState depthOnlyAttaState;
-		depthOnlyAttaState.color_write_mask = 0;
-
-		defaultColorState.attachments.push_back(defaultAttaState);
-		depthOnlyColorState.attachments.push_back(depthOnlyAttaState);
-		blendColorState.attachments.push_back(blendAttaState);
-	}
+	std::vector<Image> offScreenImgs;
+	offScreenImgs.emplace_back(std::move(colorImage));
+	offScreenImgs.emplace_back(std::move(depthImage));
+	offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenImgs));
 
 	{
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
@@ -247,22 +214,10 @@ void forward_plus::prepare_pipelines()
 
 	{
 		// Debug Depth
-		std::vector<LoadStoreInfo> loadStoreInfos;
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
-		std::vector<SubpassInfo> subPassInfos;
-		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-
-		debugDepthPass.renderTarget = offScreenRT;
-		debugDepthPass.PrebuildPass(refDevice, loadStoreInfos, subPassInfos);
-
-		PipelineState *debugDepthState = debugDepthPass.PushPipeline(refDevice, PostProcess, std::string("debug_depth"));
-		debugDepthState->set_depth_stencil_state(postProcessDepthState);
-		debugDepthState->set_color_blend_state(defaultColorState);
-		VertexInputState vertexInputState;
-		vertexInputState.bindings.emplace_back(VkVertexInputBindingDescription{0, sizeof(float) * 3, VK_VERTEX_INPUT_RATE_VERTEX});
-		vertexInputState.attributes.emplace_back(VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0});
-		debugDepthState->set_vertex_input_state(vertexInputState);
+		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
+		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_depth.frag"));
+		showDepthPass   = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
+		showDepthPass->prepare(offScreenRT.get());
 	}
 
 	// opaque render
@@ -502,15 +457,8 @@ void forward_plus::render(float delta_time)
 	if (debugDepth)
 	{
 		// show linear depth pass
-		commandBuffer.begin_render_pass(debugDepthPass.GetRenderTarget(), debugDepthPass.GetRenderPass(), debugDepthPass.GetFrameBuffer(), clearValue);
-		bind_pipeline_state(commandBuffer, debugDepthPass.pipelines[PostProcess]);
-		const PipelineLayout &layout = debugDepthPass.pipelines[PostProcess].get_pipeline_layout();
-		commandBuffer.bind_pipeline_layout(const_cast<PipelineLayout &>(layout));
-		commandBuffer.bind_image(*linearDepthImageView, *linearClampSampler, 0, 0, 0);
-		commandBuffer.set_vertex_input_state(debugDepthPass.pipelines[PostProcess].get_vertex_input_state());
-		commandBuffer.bind_vertex_buffers(0, {*postProcessVB}, {0});
-		commandBuffer.draw(3, 1, 0, 0);
-		commandBuffer.end_render_pass();
+		showDepthPass->set_up(postProcessVB.get(), linearDepthImageView.get());
+		showDepthPass->draw(commandBuffer);
 	}
 	else
 	{

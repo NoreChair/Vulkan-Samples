@@ -9,6 +9,7 @@
 #include "opaque_pass.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
+#include "show_depth_pass.h"
 #include "vulkan_sample.h"
 #include <initializer_list>
 #include <unordered_map>
@@ -31,57 +32,6 @@ class vkb::sg::SubMesh;
 
 class forward_plus : public vkb::VulkanSample
 {
-	enum RenderOrder : uint32_t
-	{
-		Opaque,
-		AlphaBlend,
-		PostProcess
-	};
-
-	struct RenderPassEntry
-	{
-		std::shared_ptr<vkb::RenderTarget>     renderTarget;
-		vkb::Framebuffer *                     frameBuffer;
-		vkb::RenderPass *                      renderPass;
-		std::map<uint32_t, vkb::PipelineState> pipelines;
-
-		inline vkb::RenderTarget &GetRenderTarget()
-		{
-			return *renderTarget.get();
-		}
-
-		inline vkb::Framebuffer &GetFrameBuffer()
-		{
-			return *frameBuffer;
-		}
-
-		inline vkb::RenderPass &GetRenderPass()
-		{
-			return *renderPass;
-		}
-
-		void PrebuildPass(vkb::Device &device, std::vector<vkb::LoadStoreInfo> &loadStoreInfos, std::vector<vkb::SubpassInfo> &subPassInfos)
-		{
-			DEBUG_ASSERT(renderTarget != nullptr, "RenderTarget can not be nullptr");
-			renderPass = &device.get_resource_cache().request_render_pass(renderTarget->get_attachments(), loadStoreInfos, subPassInfos);
-			DEBUG_ASSERT(renderPass != nullptr, "RenderPass can not be nullptr");
-			frameBuffer = &device.get_resource_cache().request_framebuffer(GetRenderTarget(), GetRenderPass());
-			DEBUG_ASSERT(frameBuffer != nullptr, "FrameBuffer can not be nullptr");
-		}
-
-		vkb::PipelineState *PushPipeline(vkb::Device &device, uint32_t order, std::string &programName)
-		{
-			ShaderProgram *      program = ShaderProgram::Find(programName);
-			vkb::PipelineLayout &layout  = device.get_resource_cache().request_pipeline_layout(program->GetShaderModules());
-
-			vkb::PipelineState pipelineState;
-			pipelineState.set_pipeline_layout(layout);
-			pipelineState.set_render_pass(GetRenderPass());
-			pipelines.emplace(std::make_pair(order, std::move(pipelineState)));
-			return &pipelines[order];
-		}
-	};
-
 	struct ComputePassEntry
 	{
 		vkb::PipelineLayout *pipelineLayout{nullptr};
@@ -243,11 +193,11 @@ class forward_plus : public vkb::VulkanSample
 	std::shared_ptr<vkb::core::Buffer>    postProcessVB{nullptr};
 	std::shared_ptr<vkb::RenderTarget>    offScreenRT{nullptr};
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
-	std::shared_ptr<vkb::core::Sampler>   linearClampSampler{nullptr};
 
-	ComputePassEntry                 linearDepthPass{};
-	ComputePassEntry                 lightGridPass{};
-	RenderPassEntry                  debugDepthPass{};
+	ComputePassEntry linearDepthPass{};
+	ComputePassEntry lightGridPass{};
+
+	std::unique_ptr<show_depth_pass> showDepthPass{nullptr};
 	std::unique_ptr<depth_only_pass> depthPrePass{nullptr};
 	std::unique_ptr<opaque_pass>     opaquePass{nullptr};
 };
