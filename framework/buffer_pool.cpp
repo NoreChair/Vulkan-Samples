@@ -96,14 +96,8 @@ BufferBlock &BufferPool::request_buffer_block(const VkDeviceSize minimum_size)
 {
 	// Find the first block in the range of the inactive blocks
 	// which can fit the minimum size
-//#define MEMORY_COMPACT
-#if defined(MEMORY_COMPACT)
-	auto it = std::upper_bound(buffer_blocks.begin() + active_buffer_block_count, buffer_blocks.end(), minimum_size,
-	                           [](const VkDeviceSize &a, const std::unique_ptr<BufferBlock> &b) -> bool { return a <= b->get_spare_size(); });
-#else
 	auto it = std::upper_bound(buffer_blocks.begin() + active_buffer_block_count, buffer_blocks.end(), minimum_size,
 	                           [](const VkDeviceSize &a, const std::unique_ptr<BufferBlock> &b) -> bool { return a <= b->get_size(); });
-#endif
 	if (it != buffer_blocks.end())
 	{
 		// Recycle inactive block
@@ -145,6 +139,18 @@ void BufferAllocation::update(const std::vector<uint8_t> &data, uint32_t offset)
 	if (offset + data.size() <= size)
 	{
 		buffer->update(data, to_u32(base_offset) + offset);
+	}
+	else
+	{
+		LOGE("Ignore buffer allocation update");
+	}
+}
+
+void BufferAllocation::update(const uint8_t *data, uint32_t byteSize, uint32_t offset)
+{
+	if (offset + byteSize <= size)
+	{
+		buffer->update(data, byteSize, offset);
 	}
 	else
 	{

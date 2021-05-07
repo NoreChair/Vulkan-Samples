@@ -45,6 +45,8 @@ class BufferAllocation
 
 	void update(const std::vector<uint8_t> &data, uint32_t offset = 0);
 
+	void update(const uint8_t *data, uint32_t byteSize, uint32_t offset = 0);
+
 	template <class T>
 	void update(const T &value, uint32_t offset = 0)
 	{
