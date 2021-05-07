@@ -419,6 +419,118 @@ std::unique_ptr<sg::SubMesh> GLTFLoader::read_model_from_file(const std::string 
 	return std::move(load_model(index));
 }
 
+std::unique_ptr<sg::SubMesh> GLTFLoader::read_simple_model_from_file(const std::string &file_name, uint32_t index)
+{
+	std::string err;
+	std::string warn;
+
+	tinygltf::TinyGLTF gltf_loader;
+
+	std::string gltf_file = vkb::fs::path::get(vkb::fs::path::Type::Assets) + file_name;
+
+	bool importResult = gltf_loader.LoadASCIIFromFile(&model, &err, &warn, gltf_file.c_str());
+
+	if (!importResult)
+	{
+		LOGE("Failed to load gltf file {}.", gltf_file.c_str());
+
+		return nullptr;
+	}
+
+	if (!err.empty())
+	{
+		LOGE("Error loading gltf model: {}.", err.c_str());
+
+		return nullptr;
+	}
+
+	if (!warn.empty())
+	{
+		LOGI("{}", warn.c_str());
+	}
+
+	size_t pos = file_name.find_last_of('/');
+
+	model_path = file_name.substr(0, pos);
+
+	if (pos == std::string::npos)
+	{
+		model_path.clear();
+	}
+
+	auto &gltf_mesh = model.meshes.at(index);
+
+	auto &gltf_primitive = gltf_mesh.primitives.at(0);
+
+	auto submesh = std::make_unique<sg::SubMesh>();
+	for (auto &attribute : gltf_primitive.attributes)
+	{
+		std::string attrib_name = attribute.first;
+		std::transform(attrib_name.begin(), attrib_name.end(), attrib_name.begin(), ::tolower);
+
+		auto vertex_data = get_attribute_data(&model, attribute.second);
+
+		if (attrib_name == "position")
+		{
+			submesh->vertices_count = to_u32(model.accessors.at(attribute.second).count);
+		}
+
+		core::Buffer buffer{device,
+		                    vertex_data.size(),
+		                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		                    VMA_MEMORY_USAGE_CPU_TO_GPU};
+		buffer.update(vertex_data);
+
+		submesh->vertex_buffers.insert(std::make_pair(attrib_name, std::move(buffer)));
+
+		sg::VertexAttribute attrib;
+		attrib.format = get_attribute_format(&model, attribute.second);
+		attrib.stride = to_u32(get_attribute_stride(&model, attribute.second));
+
+		submesh->set_attribute(attrib_name, attrib);
+	}
+
+	if (gltf_primitive.indices >= 0)
+	{
+		submesh->vertex_indices = to_u32(get_attribute_size(&model, gltf_primitive.indices));
+
+		auto format = get_attribute_format(&model, gltf_primitive.indices);
+
+		auto index_data = get_attribute_data(&model, gltf_primitive.indices);
+
+		switch (format)
+		{
+			case VK_FORMAT_R8_UINT:
+				// Converts uint8 data into uint16 data, still represented by a uint8 vector
+				index_data          = convert_underlying_data_stride(index_data, 1, 2);
+				submesh->index_type = VK_INDEX_TYPE_UINT16;
+				break;
+			case VK_FORMAT_R16_UINT:
+				submesh->index_type = VK_INDEX_TYPE_UINT16;
+				break;
+			case VK_FORMAT_R32_UINT:
+				submesh->index_type = VK_INDEX_TYPE_UINT32;
+				break;
+			default:
+				LOGE("gltf primitive has invalid format type");
+				break;
+		}
+
+		submesh->index_buffer = std::make_unique<core::Buffer>(device,
+		                                                       index_data.size(),
+		                                                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+		                                                       VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+		submesh->index_buffer->update(index_data);
+	}
+	else
+	{
+		submesh->vertices_count = to_u32(get_attribute_size(&model, gltf_primitive.attributes.at("POSITION")));
+	}
+
+	return std::move(submesh);
+}
+
 sg::Scene GLTFLoader::load_scene(int scene_index)
 {
 	auto scene = sg::Scene();
