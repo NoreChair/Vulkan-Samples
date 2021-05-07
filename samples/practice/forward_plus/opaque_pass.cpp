@@ -25,7 +25,7 @@ void opaque_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_tar
 
 	std::vector<LoadStoreInfo> loadStoreInfos;
 	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
 
 	std::vector<SubpassInfo> subPassInfos;
 	subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
@@ -46,14 +46,14 @@ void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light
 	light_data_buffer = light_data;
 }
 
-void opaque_pass::draw(vkb::CommandBuffer &comman_buffer, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &submeshs)
+void opaque_pass::draw(vkb::CommandBuffer &command_buffer, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &submeshs)
 {
 	Device &device = render_context.get_device();
 
 	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
-	comman_buffer.begin_render_pass(*render_target, *render_pass, *frame_buffer, clearValue);
+	command_buffer.begin_render_pass(*render_target, *render_pass, *frame_buffer, clearValue);
 
-	bind_pipeline_state(comman_buffer, pipeline_state);
+	bind_pipeline_state(command_buffer, pipeline_state);
 
 	for (auto iter = submeshs.begin(); iter != submeshs.end(); iter++)
 	{
@@ -66,19 +66,19 @@ void opaque_pass::draw(vkb::CommandBuffer &comman_buffer, std::multimap<float, s
 		modules.push_back(&device.get_resource_cache().request_shader_module(VK_SHADER_STAGE_FRAGMENT_BIT, get_fragment_shader(), variant));
 
 		PipelineLayout &layout = device.get_resource_cache().request_pipeline_layout(modules);
-		comman_buffer.bind_pipeline_layout(layout);
-		update_global_uniform_buffers(comman_buffer, node);
-		bind_descriptor(comman_buffer, layout, submesh);
-		if (bind_vertex_input(comman_buffer, layout, submesh))
+		command_buffer.bind_pipeline_layout(layout);
+		update_global_uniform_buffers(command_buffer, node);
+		bind_descriptor(command_buffer, layout, submesh);
+		if (bind_vertex_input(command_buffer, layout, submesh))
 		{
-			comman_buffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
+			command_buffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
 		}
 		else
 		{
-			comman_buffer.draw(submesh->vertices_count, 1, 0, 0);
+			command_buffer.draw(submesh->vertices_count, 1, 0, 0);
 		}
 	}
-	comman_buffer.end_render_pass();
+	command_buffer.end_render_pass();
 }
 
 void opaque_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline)

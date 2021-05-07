@@ -40,10 +40,10 @@ bool forward_plus::prepare(Platform &platform)
 	}
 
 	prepare_resources();
+	prepare_pipelines();
+	prepare_camera();
 	prepare_buffer();
 	prepare_light();
-	prepare_camera();
-	prepare_pipelines();
 	return true;
 }
 
@@ -139,6 +139,8 @@ void forward_plus::prepare_light()
 
 	const float              pi = 3.14159265359f;
 	std::vector<LightBuffer> lightData(MAX_LIGHTS_COUNT);
+	std::vector<glm::vec3>   centers(MAX_LIGHTS_COUNT);
+	std::vector<float>       radius(MAX_LIGHTS_COUNT);
 
 	for (uint32_t n = 0; n < MAX_LIGHTS_COUNT; n++)
 	{
@@ -165,23 +167,28 @@ void forward_plus::prepare_light()
 		lightData[n].intensity    = type == 1 ? 5.0f : 1.0f;
 		lightData[n].lightType    = type;
 		lightData[n].padding      = 0;
+
+		centers[n] = pos;
+		radius[n]  = lightRadius;
 	}
 
 	lightBuffer->update(&lightData[0], MAX_LIGHTS_COUNT * sizeof(LightBuffer));
+	debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius));
 }
 
 void forward_plus::prepare_pipelines()
 {
+	Device & refDevice    = *device.get();
 	auto &   extent2d     = get_render_context().get_surface_extent();
 	uint32_t windowWidth  = extent2d.width;
 	uint32_t windowHeight = extent2d.height;
 
-	Device &refDevice = *device.get();
+	VkExtent3D extent{windowWidth, windowHeight, 1};
 
 	// Create Render Image
-	VkExtent3D extent{windowWidth, windowHeight, 1};
-	Image      depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	Image      colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+
 	linearDepthImage     = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
 
@@ -198,7 +205,6 @@ void forward_plus::prepare_pipelines()
 	}
 
 	{
-		// Linear Depth
 		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("linear_depth"));
 		linearDepthPass.pipelineLayout    = &refDevice.get_resource_cache().request_pipeline_layout(linearDepthProgram->GetShaderModules());
 		PipelineState pipelineState;
@@ -213,14 +219,19 @@ void forward_plus::prepare_pipelines()
 	}
 
 	{
-		// Debug Depth
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_depth.frag"));
 		showDepthPass   = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
 		showDepthPass->prepare(offScreenRT.get());
 	}
 
-	// opaque render
+	{
+		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/simple_vert.vert"));
+		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/simple_color.frag"));
+		debugDrawPass   = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
+		debugDrawPass->prepare(camera, offScreenRT.get());
+	}
+
 	{
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
@@ -251,6 +262,7 @@ void forward_plus::prepare_resources()
 		    {"depth_only", "forward_plus/depth_only.vert", "forward_plus/depth_only.frag"},
 		    {"pbr_plus", "forward_plus/pbr_plus.vert", "forward_plus/pbr_plus.frag"},
 		    {"debug_depth", "forward_plus/screen_base.vert", "forward_plus/debug_depth.frag"},
+		    {"debug_draw", "forward_plus/simple_vert.vert", "forward_plus/simple_color.frag"},
 		};
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
@@ -311,6 +323,12 @@ void forward_plus::prepare_resources()
 				sceneAABB->update(meshs[i]->get_bounds().get_max());
 			}
 			scene->add_component(std::move(sceneAABB), scene->get_root_node());
+		}
+
+		{
+			GLTFLoader loader{*device};
+			sphere_mesh = loader.read_simple_model_from_file("scenes/unit_sphere.gltf", 0);
+			cube_mesh   = loader.read_simple_model_from_file("scenes/unit_cube.gltf", 0);
 		}
 	}
 }
@@ -406,13 +424,15 @@ void forward_plus::render(float delta_time)
 
 		struct
 		{
-			glm::mat4  viewProj;
+			glm::mat4  viewMatrix;
+			glm::mat4  projMatrix;
 			VkExtent2D viewport;
 			uint32_t   tileCountX;
 			uint32_t   lightBufferCount;
 			float      invTileDim;
 		} uniforms{
-		    vkb::vulkan_style_projection(camera->get_projection()) * camera->get_view(),
+		    camera->get_view(),
+		    vkb::vulkan_style_projection(camera->get_projection()),
 		    extent,
 		    dispatchCount.width,
 		    MAX_LIGHTS_COUNT,
@@ -436,7 +456,6 @@ void forward_plus::render(float delta_time)
 	}
 
 	{
-		//
 		ImageMemoryBarrier barrier{};
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -464,6 +483,9 @@ void forward_plus::render(float delta_time)
 	{
 		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get());
 		opaquePass->draw(commandBuffer, opaqueNodes);
+
+		debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get());
+		debugDrawPass->draw(commandBuffer);
 	}
 
 	blit_and_present(commandBuffer);

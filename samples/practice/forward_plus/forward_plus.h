@@ -7,6 +7,7 @@
 #include "core/shader_module.h"
 #include "depth_only_pass.h"
 #include "opaque_pass.h"
+#include "debug_draw_pass.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
 #include "show_depth_pass.h"
@@ -194,9 +195,13 @@ class forward_plus : public vkb::VulkanSample
 	std::shared_ptr<vkb::RenderTarget>    offScreenRT{nullptr};
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
 
+	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
+	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};
+
 	ComputePassEntry linearDepthPass{};
 	ComputePassEntry lightGridPass{};
 
+	std::unique_ptr<debug_draw_pass> debugDrawPass{nullptr};
 	std::unique_ptr<show_depth_pass> showDepthPass{nullptr};
 	std::unique_ptr<depth_only_pass> depthPrePass{nullptr};
 	std::unique_ptr<opaque_pass>     opaquePass{nullptr};

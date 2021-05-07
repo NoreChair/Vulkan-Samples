@@ -22,7 +22,8 @@ struct LightBufferData{
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform LightGridUniforms {
-    mat4 viewProjMatrix;
+    mat4 viewMatrix;
+    mat4 projMatrix;
     uvec2 viewPort;
     uint tileCountX;
     uint lightBufferCount;
@@ -114,6 +115,17 @@ bool SpotInFrustum(vec4 frustum[6], LightBufferData light){
     return inSide;
 }
 
+vec4 ComputePlane(vec3 p0, vec3 p1, vec3 p2){
+    vec4 plane = vec4(0.0);
+    vec3 v0 = p1 - p0;
+    vec3 v2 = p2 - p0;
+
+    plane.xyz = normalize(cross(v0, v2));
+    // Compute the distance to the origin using p0.
+    plane.w = dot(plane.xyz, p0);
+    return plane;
+}
+
 void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint threadIndex, uint groupSize){
     float depth = -1.0f;
     if(globalThreadID.x >= viewPort.x || globalThreadID.y >= viewPort.y){
@@ -152,11 +164,11 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
         -minDepth * rcpDepthRange
     );
     mat4 projToTile = mat4(tileScale.x, 0.0, 0.0, tileBias.x,
-        0.0, tileScale.y, 0.0, tileBias.y,
+        0.0, -tileScale.y, 0.0, tileBias.y,
         0.0, 0.0, rcpDepthRange, tileBias.z,
         0.0, 0.0, 0.0, 1.0
     );
-    mat4 tileMVP = projToTile * viewProjMatrix;
+    mat4 tileMVP = projToTile * projMatrix * viewMatrix;
 
     // http://www8.cs.umu.se/kurser/5DV051/HT12/lab/plane_extraction.pdf
     // construct frustum from vp matrix, it should be in view space plane

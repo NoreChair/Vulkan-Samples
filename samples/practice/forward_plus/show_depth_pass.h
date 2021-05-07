@@ -2,7 +2,6 @@
 #include "common/vk_common.h"
 #include "platform/platform.h"
 #include "rendering/subpass.h"
-#include "scene_graph/components/camera.h"
 
 class show_depth_pass : public vkb::Subpass
 {

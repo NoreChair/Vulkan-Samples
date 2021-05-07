@@ -22,7 +22,7 @@ layout(set = 0, binding = 1) uniform LightInfo
 	vec4  direction_light;
     vec4  direction_light_color;
 	float inv_tile_dim;
-    uint  tile_count_x; 
+    uint  tile_count_x;
 };
 
 // for performance reason, data best align with 128-bit
@@ -304,7 +304,7 @@ void main(void)
 		light_contribution += light_data.color * atten * light_data.intensity * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
     }
 
-    // Abient 
+    // Abient
 	// [1] Tempory irradiance to fix dark metals
 	// TODO: add specular irradiance for realistic metals
 	vec3 irradiance    = vec3(0.2);
