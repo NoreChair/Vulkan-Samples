@@ -40,8 +40,8 @@ bool forward_plus::prepare(Platform &platform)
 	}
 
 	prepare_resources();
-	prepare_pipelines();
 	prepare_camera();
+	prepare_pipelines();
 	prepare_buffer();
 	prepare_light();
 	return true;
@@ -145,7 +145,7 @@ void forward_plus::prepare_light()
 	for (uint32_t n = 0; n < MAX_LIGHTS_COUNT; n++)
 	{
 		glm::vec3 pos         = randVecUniform() * posScale + posBias;
-		float     lightRadius = randFloat() * 800.0f + 200.0f;
+		float     lightRadius = randFloat() * 200.0f + 50.0f;
 
 		glm::vec3 color      = randVecUniform();
 		float     colorScale = randFloat() * .3f + .3f;
@@ -226,8 +226,8 @@ void forward_plus::prepare_pipelines()
 	}
 
 	{
-		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/simple_vert.vert"));
-		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/simple_color.frag"));
+		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
+		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
 		debugDrawPass   = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
 		debugDrawPass->prepare(camera, offScreenRT.get());
 	}
@@ -262,7 +262,7 @@ void forward_plus::prepare_resources()
 		    {"depth_only", "forward_plus/depth_only.vert", "forward_plus/depth_only.frag"},
 		    {"pbr_plus", "forward_plus/pbr_plus.vert", "forward_plus/pbr_plus.frag"},
 		    {"debug_depth", "forward_plus/screen_base.vert", "forward_plus/debug_depth.frag"},
-		    {"debug_draw", "forward_plus/simple_vert.vert", "forward_plus/simple_color.frag"},
+		    {"debug_draw", "forward_plus/debug_draw.vert", "forward_plus/debug_draw.frag"},
 		};
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},

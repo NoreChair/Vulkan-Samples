@@ -31,7 +31,12 @@ void debug_draw_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render
 
 	RasterizationState rasterState;
 	rasterState.polygon_mode = VK_POLYGON_MODE_LINE;
+	rasterState.cull_mode    = VK_CULL_MODE_NONE;
 	pipeline_state.set_rasterization_state(rasterState);
+
+	DepthStencilState depthState;
+	depthState.depth_write_enable = false;
+	pipeline_state.set_depth_stencil_state(depthState);
 
 	ColorBlendState           defaultColorState;
 	ColorBlendAttachmentState defaultAttaState;
@@ -63,6 +68,14 @@ void debug_draw_pass::set_up(vkb::sg::SubMesh *sphere, vkb::sg::SubMesh *cube)
 
 void debug_draw_pass::draw(vkb::CommandBuffer &command_buffer)
 {
+	int cube_count   = (int) bounding_cube.size();
+	int sphere_count = (int) bounding_sphere.size();
+	int count        = cube_count + sphere_count;
+	if (count == 0)
+	{
+		return;
+	}
+
 	command_buffer.begin_render_pass(*render_target, *render_pass, *frame_buffer, {});
 	bind_pipeline_state(command_buffer, pipeline_state);
 	auto &layout = const_cast<PipelineLayout &>(pipeline_state.get_pipeline_layout());
@@ -70,11 +83,16 @@ void debug_draw_pass::draw(vkb::CommandBuffer &command_buffer)
 
 	std::vector<std::reference_wrapper<const core::Buffer>> buffers;
 
-	int   count           = bounding_cube.size() + bounding_sphere.size();
 	auto &instance_buffer = render_context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof(instance_attribute) * count);
-	instance_buffer.update((uint8_t *) bounding_cube.data(), sizeof(instance_attribute) * bounding_cube.size(), 0);
-	instance_buffer.update((uint8_t *) bounding_sphere.data(), sizeof(instance_attribute) * bounding_sphere.size(), sizeof(instance_attribute) * bounding_cube.size());
+	instance_buffer.update((uint8_t *) bounding_cube.data(), sizeof(instance_attribute) * cube_count, 0);
+	instance_buffer.update((uint8_t *) bounding_sphere.data(), sizeof(instance_attribute) * sphere_count, sizeof(instance_attribute) * cube_count);
 
+	BufferAllocation &uniform_buffer = render_context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(glm::mat4));
+	uniform_buffer.update(vkb::vulkan_style_projection(render_camera->get_projection()) * render_camera->get_view());
+	command_buffer.bind_buffer(uniform_buffer.get_buffer(), uniform_buffer.get_offset(), uniform_buffer.get_size(), 0, 0, 0);
+
+	command_buffer.set_vertex_input_state(pipeline_state.get_vertex_input_state());
+	if (cube_count)
 	{
 		// Draw Cube
 		auto vert_iter = cube_mesh->vertex_buffers.find(std::string("position"));
@@ -84,29 +102,30 @@ void debug_draw_pass::draw(vkb::CommandBuffer &command_buffer)
 		if (cube_mesh->vertex_indices != 0)
 		{
 			command_buffer.bind_index_buffer(*cube_mesh->index_buffer, cube_mesh->index_offset, cube_mesh->index_type);
-			command_buffer.draw_indexed(cube_mesh->vertex_indices, bounding_cube.size(), 0, 0, 0);
+			command_buffer.draw_indexed(cube_mesh->vertex_indices, cube_count, 0, 0, 0);
 		}
 		else
 		{
-			command_buffer.draw(cube_mesh->vertices_count, bounding_cube.size(), 0, 0);
+			command_buffer.draw(cube_mesh->vertices_count, cube_count, 0, 0);
 		}
+		buffers.clear();
 	}
 
-	buffers.clear();
+	if (sphere_count)
 	{
 		// Draw Sphere
 		auto vert_iter = sphere_mesh->vertex_buffers.find(std::string("position"));
 		buffers.emplace_back(std::reference_wrapper<const core::Buffer>(std::ref(vert_iter->second)));
 		buffers.emplace_back(std::reference_wrapper<const core::Buffer>(std::ref(instance_buffer.get_buffer())));
-		command_buffer.bind_vertex_buffers(0, buffers, {0, sizeof(instance_attribute) * bounding_cube.size()});
+		command_buffer.bind_vertex_buffers(0, buffers, {0, sizeof(instance_attribute) * cube_count});
 		if (sphere_mesh->vertex_indices != 0)
 		{
 			command_buffer.bind_index_buffer(*sphere_mesh->index_buffer, sphere_mesh->index_offset, sphere_mesh->index_type);
-			command_buffer.draw_indexed(sphere_mesh->vertex_indices, bounding_sphere.size(), 0, 0, 0);
+			command_buffer.draw_indexed(sphere_mesh->vertex_indices, sphere_count, 0, 0, 0);
 		}
 		else
 		{
-			command_buffer.draw(sphere_mesh->vertices_count, bounding_sphere.size(), 0, 0);
+			command_buffer.draw(sphere_mesh->vertices_count, sphere_count, 0, 0);
 		}
 	}
 	command_buffer.end_render_pass();
@@ -125,25 +144,27 @@ void debug_draw_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb
 void debug_draw_pass::add_bounding_sphere(std::vector<glm::vec3> &&center, std::vector<float> &&radius)
 {
 	assert(center.size() == radius.size());
-	size_t src_size = bounding_sphere.size();
+	const float f        = 1.0 / RAND_MAX;
+	size_t      src_size = bounding_sphere.size();
 	bounding_sphere.resize(src_size + center.size());
 	for (size_t i = 0; i < center.size(); i++)
 	{
 		bounding_sphere[src_size + i].center = center[i];
 		bounding_sphere[src_size + i].scale  = glm::vec3(radius[i]);
-		bounding_sphere[src_size + i].color  = glm::vec3(0.0, 1.0, 0.0);
+		bounding_sphere[src_size + i].color  = glm::vec3(rand() * f, rand() * f, rand() * f);
 	}
 }
 
 void debug_draw_pass::add_bounding_box(std::vector<glm::vec3> &&center, std::vector<glm::vec3> &&extent)
 {
 	assert(center.size() == extent.size());
+	const float f = 1.0 / RAND_MAX;
 	size_t src_size = bounding_cube.size();
 	bounding_cube.resize(src_size + center.size());
 	for (size_t i = 0; i < center.size(); i++)
 	{
 		bounding_cube[src_size + i].center = center[i];
 		bounding_cube[src_size + i].scale  = extent[i];
-		bounding_cube[src_size + i].color  = glm::vec3(0.0, 0.0, 1.0);
+		bounding_cube[src_size + i].color  = glm::vec3(rand() * f, rand() * f, rand() * f);
 	}
 }

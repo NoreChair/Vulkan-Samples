@@ -13,11 +13,7 @@ layout(set = 0, binding = 0) uniform GlobalUniform
 {
 	mat4  model;
 	mat4  view_proj;
-	vec4  direction_light;
-    vec4  direction_light_color;
 	vec3  camera_position;
-	float inv_tile_dim;
-    uint  tile_count_x;
 };
 
 void main(){
