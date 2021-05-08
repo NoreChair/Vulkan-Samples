@@ -151,8 +151,8 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     memoryBarrierShared();
     barrier();
 
-    float minDepth = uintBitsToFloat(minDepthUint);
-    float maxDepth = uintBitsToFloat(maxDepthUint);
+    float maxDepth = uintBitsToFloat(minDepthUint);
+    float minDepth = uintBitsToFloat(maxDepthUint);
 
     float depthRange = max(maxDepth - minDepth, FLT_MIN);
     float rcpDepthRange = 1.0 / depthRange;
@@ -160,7 +160,7 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     vec2 tileScale = vec2(viewPort) * invTileDim;
     vec3 tileBias = vec3(-(2.0 * float(groupID.x) + 1.0 - ceil(tileScale.x)),
         -(2.0 * float(groupID.y) + 1.0 - ceil(tileScale.y)),
-        minDepth * rcpDepthRange
+        -minDepth * rcpDepthRange
     );
     mat4 projToTile = mat4(tileScale.x, 0.0, 0.0, 0.0,
         0.0, tileScale.y, 0.0, 0.0,

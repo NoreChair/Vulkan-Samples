@@ -152,7 +152,7 @@ void forward_plus::prepare_light()
 		float     colorScale = randFloat() * .3f + .3f;
 		color                = color * colorScale;
 
-		uint32_t type = n < 32 * 2 ? 0 : 1;
+		uint32_t type = n < MAX_LIGHTS_COUNT / 2 ? 0 : 1;
 
 		glm::vec3 coneDir   = randVecGaussian();
 		float     coneInner = (randFloat() * .2f + .025f) * pi;
@@ -165,7 +165,7 @@ void forward_plus::prepare_light()
 		lightData[n].coneAngles.y = cos(coneOuter);
 		lightData[n].coneAngles.z = cos(coneOuter * 0.5f);
 		lightData[n].radius       = lightRadius;
-		lightData[n].intensity    = type == 1 ? 5.0f * lightRadius * lightRadius : 1.0f * lightRadius * lightRadius;
+		lightData[n].intensity    = 1.0f;
 		lightData[n].lightType    = type;
 		lightData[n].padding      = 0;
 
@@ -424,9 +424,6 @@ void forward_plus::render(float delta_time)
 		bind_pipeline_state(commandBuffer, defaultState);
 		commandBuffer.bind_pipeline_layout(*lightGridPass.pipelineLayout);
 
-		sg::PerspectiveCamera *perspective_camera = dynamic_cast<sg::PerspectiveCamera *>(camera);
-		glm::mat4              proj               = glm::perspective(perspective_camera->get_field_of_view(), perspective_camera->get_aspect_ratio(), perspective_camera->get_near_plane(), perspective_camera->get_far_plane());
-
 		struct
 		{
 			glm::mat4  viewMatrix;
@@ -437,7 +434,7 @@ void forward_plus::render(float delta_time)
 			float      invTileDim;
 		} uniforms{
 		    camera->get_view(),
-		    vkb::vulkan_style_projection(proj),
+		    vkb::vulkan_style_projection(camera->get_projection()),
 		    extent,
 		    dispatchCount.width,
 		    MAX_LIGHTS_COUNT,

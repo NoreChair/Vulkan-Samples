@@ -217,21 +217,21 @@ void main(void)
 	vec3 diffuse_color      = base_color.rgb * (1.0 - metallic);
 	vec3 light_contribution = vec3(0.0);
     // Direction Light
-    // {
-    //     vec3 L = -direction_light.xyz;
-	// 	vec3 H = normalize(V + L);
+    {
+        vec3 L = -direction_light.xyz;
+		vec3 H = normalize(V + L);
 
-	// 	float LdotH = saturate(dot(L, H));
-	// 	float NdotH = saturate(dot(N, H));
-	// 	float NdotL = saturate(dot(N, L));
+		float LdotH = saturate(dot(L, H));
+		float NdotH = saturate(dot(N, H));
+		float NdotL = saturate(dot(N, L));
 
-	// 	vec3  F   = F_Schlick(F0, F90, LdotH);
-	// 	float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
-	// 	float D   = D_GGX(NdotH, roughness);
-	// 	vec3  Fr  = F * D * Vis;
-    //     float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-    //     light_contribution += NdotL * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
-    // }
+		vec3  F   = F_Schlick(F0, F90, LdotH);
+		float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
+		float D   = D_GGX(NdotH, roughness);
+		vec3  Fr  = F * D * Vis;
+        float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
+        light_contribution += NdotL * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+    }
 
     uvec2 tile_pos   = GetTilePos(gl_FragCoord.xy, vec2(inv_tile_dim));
     uint tile_index  = GetTileIndex(tile_pos, tile_count_x);
@@ -263,8 +263,7 @@ void main(void)
 		vec3  Fr  = F * D * Vis;
 
 		float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-		// light_contribution += light_data.color * atten  * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
-		light_contribution += light_data.color * atten * NdotL * diffuse_color;
+		light_contribution += light_data.color * atten * NdotL * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
 	}
 
     // Cone Light
@@ -293,8 +292,7 @@ void main(void)
 		vec3  Fr  = F * D * Vis;
 
 		float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-		// light_contribution += light_data.color * atten * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
-		light_contribution += light_data.color * atten * diffuse_color * NdotL;
+		light_contribution += light_data.color * atten * NdotL * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
     }
 
     // Abient
@@ -304,6 +302,5 @@ void main(void)
 	// vec3 F             = F_Schlick_Roughness(F0, max(dot(N, V), 0.0), roughness * roughness * roughness * roughness);
 	// vec3 ibl_diffuse   = irradiance * base_color.rgb;
 	// vec3 ambient_color = ibl_diffuse;
-	vec3 ambient_color = vec3(0.0);
-	o_color = vec4(0.3 * ambient_color + light_contribution, base_color.a);
+	o_color = vec4(light_contribution, base_color.a);
 }
