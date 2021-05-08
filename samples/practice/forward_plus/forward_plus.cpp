@@ -5,6 +5,7 @@
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/mesh.h"
 #include "scene_graph/components/pbr_material.h"
+#include "scene_graph/components/perspective_camera.h"
 #include "scene_graph/components/sub_mesh.h"
 #include "scene_graph/node.h"
 
@@ -416,36 +417,38 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
-		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 
 		VkExtent2D    dispatchCount = {(uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f)};
 		PipelineState defaultState;
 		bind_pipeline_state(commandBuffer, defaultState);
 		commandBuffer.bind_pipeline_layout(*lightGridPass.pipelineLayout);
 
+		sg::PerspectiveCamera *perspective_camera = dynamic_cast<sg::PerspectiveCamera *>(camera);
+		glm::mat4              proj               = glm::perspective(perspective_camera->get_field_of_view(), perspective_camera->get_aspect_ratio(), perspective_camera->get_near_plane(), perspective_camera->get_far_plane());
+
 		struct
 		{
 			glm::mat4  viewMatrix;
 			glm::mat4  projMatrix;
-			glm::mat4  invProj;
 			VkExtent2D viewport;
 			uint32_t   tileCountX;
 			uint32_t   lightBufferCount;
 			float      invTileDim;
 		} uniforms{
 		    camera->get_view(),
-		    vkb::vulkan_style_projection(camera->get_projection()),
-			glm::inverse(vkb::vulkan_style_projection(camera->get_projection())),
+		    vkb::vulkan_style_projection(proj),
 		    extent,
 		    dispatchCount.width,
 		    MAX_LIGHTS_COUNT,
 		    1.0f / 16.0f};
+
 		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
 		allocation.update(uniforms);
 		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
 		commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 1, 0);
 		commandBuffer.bind_buffer(*lightGridBuffer, 0, lightGridBuffer->get_size(), 0, 2, 0);
-		//commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 3, 0);
+		commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 3, 0);
 		commandBuffer.bind_image(*linearDepthImageView, 0, 4, 0);
 		commandBuffer.dispatch(dispatchCount.width, dispatchCount.height, 1);
 
@@ -455,7 +458,7 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
-		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 	}
 
 	{
