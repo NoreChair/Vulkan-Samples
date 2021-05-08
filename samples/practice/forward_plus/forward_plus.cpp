@@ -96,7 +96,7 @@ void forward_plus::prepare_light()
 	glm::vec3 posBias   = sceneAABB.get_min();
 
 	// todo: replace this with MT
-	srand(12645);
+	srand(57495);
 	auto randUint = []() -> uint32_t {
 		return rand();        // [0, RAND_MAX]
 	};
@@ -164,7 +164,7 @@ void forward_plus::prepare_light()
 		lightData[n].coneAngles.y = cos(coneOuter);
 		lightData[n].coneAngles.z = cos(coneOuter * 0.5f);
 		lightData[n].radius       = lightRadius;
-		lightData[n].intensity    = type == 1 ? 5.0f : 1.0f;
+		lightData[n].intensity    = type == 1 ? 5.0f * lightRadius * lightRadius : 1.0f * lightRadius * lightRadius;
 		lightData[n].lightType    = type;
 		lightData[n].padding      = 0;
 
@@ -339,6 +339,7 @@ void forward_plus::prepare_camera()
 
 	camera = &camera_node.get_component<vkb::sg::Camera>();
 	camera->set_far_plane(10000.0f);
+	camera->set_near_plane(0.01f);
 }
 
 void forward_plus::render(float delta_time)
@@ -415,7 +416,7 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
-		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 
 		VkExtent2D    dispatchCount = {(uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f)};
 		PipelineState defaultState;
@@ -426,6 +427,7 @@ void forward_plus::render(float delta_time)
 		{
 			glm::mat4  viewMatrix;
 			glm::mat4  projMatrix;
+			glm::mat4  invProj;
 			VkExtent2D viewport;
 			uint32_t   tileCountX;
 			uint32_t   lightBufferCount;
@@ -433,6 +435,7 @@ void forward_plus::render(float delta_time)
 		} uniforms{
 		    camera->get_view(),
 		    vkb::vulkan_style_projection(camera->get_projection()),
+			glm::inverse(vkb::vulkan_style_projection(camera->get_projection())),
 		    extent,
 		    dispatchCount.width,
 		    MAX_LIGHTS_COUNT,
@@ -442,7 +445,7 @@ void forward_plus::render(float delta_time)
 		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
 		commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 1, 0);
 		commandBuffer.bind_buffer(*lightGridBuffer, 0, lightGridBuffer->get_size(), 0, 2, 0);
-		commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 3, 0);
+		//commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 3, 0);
 		commandBuffer.bind_image(*linearDepthImageView, 0, 4, 0);
 		commandBuffer.dispatch(dispatchCount.width, dispatchCount.height, 1);
 
@@ -452,7 +455,7 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
-		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 	}
 
 	{

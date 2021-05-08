@@ -144,7 +144,7 @@ void debug_draw_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb
 void debug_draw_pass::add_bounding_sphere(std::vector<glm::vec3> &&center, std::vector<float> &&radius)
 {
 	assert(center.size() == radius.size());
-	const float f        = 1.0 / RAND_MAX;
+	const float f        = 1.0f / RAND_MAX;
 	size_t      src_size = bounding_sphere.size();
 	bounding_sphere.resize(src_size + center.size());
 	for (size_t i = 0; i < center.size(); i++)
@@ -158,7 +158,7 @@ void debug_draw_pass::add_bounding_sphere(std::vector<glm::vec3> &&center, std::
 void debug_draw_pass::add_bounding_box(std::vector<glm::vec3> &&center, std::vector<glm::vec3> &&extent)
 {
 	assert(center.size() == extent.size());
-	const float f = 1.0 / RAND_MAX;
+	const float f = 1.0f / RAND_MAX;
 	size_t src_size = bounding_cube.size();
 	bounding_cube.resize(src_size + center.size());
 	for (size_t i = 0; i < center.size(); i++)

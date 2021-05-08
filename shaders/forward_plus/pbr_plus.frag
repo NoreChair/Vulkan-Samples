@@ -106,8 +106,6 @@ uint GetTileOffset(uint tileIndex)
 
 const float PI = 3.14159265359;
 
-vec3 F0 = vec3(0.04);
-
 // [0] Frensel Schlick
 vec3 F_Schlick(vec3 f0, float f90, float u)
 {
@@ -115,9 +113,9 @@ vec3 F_Schlick(vec3 f0, float f90, float u)
 }
 
 // [1] IBL Defuse Irradiance
-vec3 F_Schlick_Roughness(vec3 F0, float cos_theta, float roughness)
+vec3 F_Schlick_Roughness(vec3 f0, float cos_theta, float roughness)
 {
-	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cos_theta, 5.0);
+	return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - cos_theta, 5.0);
 }
 
 // [0] Diffuse Term
@@ -193,6 +191,7 @@ vec3 saturate(vec3 t)
 
 void main(void)
 {
+	vec3 F0 		 = vec3(0.04);
 	float F90        = saturate(50.0 * F0.r);
 	vec4  base_color = vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -218,21 +217,21 @@ void main(void)
 	vec3 diffuse_color      = base_color.rgb * (1.0 - metallic);
 	vec3 light_contribution = vec3(0.0);
     // Direction Light
-    {
-        vec3 L = -direction_light.xyz;
-		vec3 H = normalize(V + L);
+    // {
+    //     vec3 L = -direction_light.xyz;
+	// 	vec3 H = normalize(V + L);
 
-		float LdotH = saturate(dot(L, H));
-		float NdotH = saturate(dot(N, H));
-		float NdotL = saturate(dot(N, L));
+	// 	float LdotH = saturate(dot(L, H));
+	// 	float NdotH = saturate(dot(N, H));
+	// 	float NdotL = saturate(dot(N, L));
 
-		vec3  F   = F_Schlick(F0, F90, LdotH);
-		float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
-		float D   = D_GGX(NdotH, roughness);
-		vec3  Fr  = F * D * Vis;
-        float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-        light_contribution += NdotL * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
-    }
+	// 	vec3  F   = F_Schlick(F0, F90, LdotH);
+	// 	float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
+	// 	float D   = D_GGX(NdotH, roughness);
+	// 	vec3  Fr  = F * D * Vis;
+    //     float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
+    //     light_contribution += NdotL * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+    // }
 
     uvec2 tile_pos   = GetTilePos(gl_FragCoord.xy, vec2(inv_tile_dim));
     uint tile_index  = GetTileIndex(tile_pos, tile_count_x);
@@ -249,11 +248,7 @@ void main(void)
 
 		vec3 world_to_light = light_data.position - v_pos;
 		float dist			= length(world_to_light);
-		float atten 		= 1.0 / (dist * dist);
-
-		if(atten < 1e-4){
-			continue;
-		}
+		float atten 		= 1.0 / (dist * dist) * light_data.radius * light_data.radius;
 
 		vec3 L = normalize(world_to_light);
 		vec3 H = normalize(V + L);
@@ -268,7 +263,8 @@ void main(void)
 		vec3  Fr  = F * D * Vis;
 
 		float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-		light_contribution += light_data.color * atten * light_data.intensity * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+		// light_contribution += light_data.color * atten  * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+		light_contribution += light_data.color * atten * NdotL * diffuse_color;
 	}
 
     // Cone Light
@@ -278,16 +274,12 @@ void main(void)
 
 		vec3 world_to_light = light_data.position - v_pos;
 		float dist 			= length(world_to_light);
-		float atten 		= 1.0 / (dist * dist);
+		float atten 		= 1.0 / (dist * dist) * light_data.radius * light_data.radius;
 
 		vec3 L 			   = normalize(world_to_light);
     	float cone_falloff = dot(-L, light_data.coneDir);
     	cone_falloff 	   = saturate((cone_falloff - light_data.coneAngles.y) * light_data.coneAngles.x);
 		atten *= cone_falloff;
-
-        if(atten < 1e-4){
-            continue;
-        }
 
 		vec3 H = normalize(V + L);
 
@@ -301,16 +293,17 @@ void main(void)
 		vec3  Fr  = F * D * Vis;
 
 		float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-		light_contribution += light_data.color * atten * light_data.intensity * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+		// light_contribution += light_data.color * atten * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+		light_contribution += light_data.color * atten * diffuse_color * NdotL;
     }
 
     // Abient
 	// [1] Tempory irradiance to fix dark metals
 	// TODO: add specular irradiance for realistic metals
-	vec3 irradiance    = vec3(0.2);
-	vec3 F             = F_Schlick_Roughness(F0, max(dot(N, V), 0.0), roughness * roughness * roughness * roughness);
-	vec3 ibl_diffuse   = irradiance * base_color.rgb;
-	vec3 ambient_color = ibl_diffuse;
-
+	// vec3 irradiance    = vec3(0.2);
+	// vec3 F             = F_Schlick_Roughness(F0, max(dot(N, V), 0.0), roughness * roughness * roughness * roughness);
+	// vec3 ibl_diffuse   = irradiance * base_color.rgb;
+	// vec3 ambient_color = ibl_diffuse;
+	vec3 ambient_color = vec3(0.0);
 	o_color = vec4(0.3 * ambient_color + light_contribution, base_color.a);
 }

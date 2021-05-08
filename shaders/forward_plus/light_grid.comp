@@ -24,6 +24,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform LightGridUniforms {
     mat4 viewMatrix;
     mat4 projMatrix;
+    mat4 invProj;
     uvec2 viewPort;
     uint tileCountX;
     uint lightBufferCount;
@@ -42,9 +43,9 @@ layout(set = 0, std430, binding = 1) readonly buffer LightBuffer{
 layout(set = 0, std430, binding = 2) writeonly buffer LightGrid{
     uint lightGridData[];
 };
-layout(set = 0, std430, binding = 3) writeonly buffer LightGridBitMask{
-    uint lightGridBitMaskData[];
-};
+// layout(set = 0, std430, binding = 3) writeonly buffer LightGridBitMask{
+//     uint lightGridBitMaskData[];
+// };
 
 layout(set = 0, r32f, binding = 4) readonly uniform highp image2D linearDepthTexture;
 
@@ -126,12 +127,33 @@ vec4 ComputePlane(vec3 p0, vec3 p1, vec3 p2){
     return plane;
 }
 
+vec3 ScreenToWorld(vec3 screen){
+    vec2 ndc = screen.xy / vec2(viewPort.x, viewPort.y);
+    // ndc.y = 1.0 - ndc.y;
+    vec4 clip = vec4(ndc * 2.0 - 1.0, screen.z, 1.0);
+    vec4 view = invProj * clip;
+    view = view / view.w;
+    vec4 worldPos = transpose(viewMatrix) * view;
+    return worldPos.xyz;
+}
+
+vec3 ScreenToView(vec3 screen){
+    vec2 ndc = screen.xy / vec2(viewPort.x, viewPort.y);
+    // ndc.y = 1.0 - ndc.y;
+    vec4 clip = vec4(ndc * 2.0 - 1.0, screen.z, 1.0);
+    vec4 view = invProj * clip;
+    view = view / view.w;
+    return view.xyz;
+}
+
 void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint threadIndex, uint groupSize){
     float depth = -1.0f;
     if(globalThreadID.x >= viewPort.x || globalThreadID.y >= viewPort.y){
         // out of bound
     }else{
         depth = imageLoad(linearDepthTexture, ivec2(globalThreadID)).r;
+        // because of reverse depth
+        // depth = 1.0 - clamp(depth, 0.0, 1.0);
     }
 
     if(int(threadIndex) == 0){
@@ -163,15 +185,15 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
         -2.0 * float(groupID.y) + tileScale.y - 1.0,
         -minDepth * rcpDepthRange
     );
-    mat4 projToTile = mat4(tileScale.x, 0.0, 0.0, tileBias.x,
-        0.0, -tileScale.y, 0.0, tileBias.y,
-        0.0, 0.0, rcpDepthRange, tileBias.z,
-        0.0, 0.0, 0.0, 1.0
+    mat4 projToTile = mat4(tileScale.x, 0.0, 0.0, 0.0,
+        0.0, -tileScale.y, 0.0, 0.0,
+        0.0, 0.0, rcpDepthRange, 0.0,
+        tileBias.x, tileBias.y, tileBias.z, 1.0
     );
     mat4 tileMVP = projToTile * projMatrix * viewMatrix;
 
-    // http://www8.cs.umu.se/kurser/5DV051/HT12/lab/plane_extraction.pdf
-    // construct frustum from vp matrix, it should be in view space plane
+    //http://www8.cs.umu.se/kurser/5DV051/HT12/lab/plane_extraction.pdf
+    //construct frustum from vp matrix, it should be in view space plane
     vec4 frustumPlanes[6];
     frustumPlanes[0] = tileMVP[3] + tileMVP[0];
     frustumPlanes[1] = tileMVP[3] - tileMVP[0];
@@ -179,6 +201,29 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     frustumPlanes[3] = tileMVP[3] - tileMVP[1];
     frustumPlanes[4] = tileMVP[3]; // DX/Vulkan like only, ogl not
     frustumPlanes[5] = tileMVP[3] - tileMVP[2];
+
+    // vec3 screenPos[4];
+    // vec3 viewPos[4];
+    // screenPos[0] = vec3(vec2(groupID.xy) * vec2(16.0, 16.0), maxDepth);
+    // screenPos[1] = vec3(vec2(float(groupID.x) + 1.0, groupID.y) * vec2(16.0, 16.0), maxDepth);
+    // screenPos[2] = vec3(vec2(groupID.x, float(groupID.y) + 1.0) * vec2(16.0, 16.0), maxDepth);
+    // screenPos[3] = vec3(vec2(float(groupID.x) + 1.0, float(groupID.y) + 1.0) * vec2(16.0, 16.0), maxDepth);
+    // viewPos[0] = ScreenToView(screenPos[0]);
+    // viewPos[1] = ScreenToView(screenPos[1]);
+    // viewPos[2] = ScreenToView(screenPos[2]);
+    // viewPos[3] = ScreenToView(screenPos[3]);
+
+    // mat4 invView = transpose(viewMatrix);
+    // vec4 frustumPlanes[6];
+    // // all plane's normal should be point in to the frustum
+    // // and plane equation base on world space
+    // frustumPlanes[0] = invView * ComputePlane(vec3(0.0), viewPos[1], viewPos[0]);
+    // frustumPlanes[1] = invView * ComputePlane(vec3(0.0), viewPos[0], viewPos[2]);
+    // frustumPlanes[2] = invView * ComputePlane(vec3(0.0), viewPos[3], viewPos[1]);
+    // frustumPlanes[3] = invView * ComputePlane(vec3(0.0), viewPos[2], viewPos[3]);
+    // frustumPlanes[4] = invView * vec4(0.0, 0.0, 1.0, minDepth);
+    // frustumPlanes[5] = invView * vec4(0.0, 0.0, -1.0, -maxDepth);
+
     for (int n = 0; n < 6; n++)
     {
         // normalize
@@ -192,14 +237,12 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     // per thread pre lightdata to find set of lights that overlap this tile
     for(uint lightIndex = threadIndex; lightIndex < totalLightCount; lightIndex += groupSize){
         LightBufferData lightData = ConvertLightBufferByte(lightBufferData[lightIndex].value);
-        bool overlap = false;
         switch(lightData.lightType){
             case 0: // sphere
             {
                 if(ShpereInFrustum(frustumPlanes, lightData)){
                     uint slot = atomicAdd(tileLightCountSphere, 1u);
                     tileLightIndicesSphere[slot] = lightIndex;
-                    overlap = true;
                 }
                 break;
             }
@@ -208,26 +251,8 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
                 if(SpotInFrustum(frustumPlanes, lightData)){
                     uint slot = atomicAdd(tileLightCountCone, 1u);
                     tileLightIndicesCone[slot] = lightIndex;
-                    overlap = true;
                 }
                 break;
-            }
-        }
-        if(overlap){
-            switch (lightIndex / 32u) // divide 32
-            {
-                case 0:
-                    atomicOr(tileLightBitMask.x, 1u << (lightIndex % 32u));
-                    break;
-                case 1:
-                    atomicOr(tileLightBitMask.y, 1u << (lightIndex % 32u));
-                    break;
-                case 2:
-                    atomicOr(tileLightBitMask.z, 1u << (lightIndex % 32u));
-                    break;
-                case 3:
-                    atomicOr(tileLightBitMask.w, 1u << (lightIndex % 32u));
-                    break;
             }
         }
     }
@@ -247,10 +272,10 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
             lightGridData[indexOffset + tileLightCountSphere + i] = tileLightIndicesCone[i];
         }
 
-        lightGridBitMaskData[tileIndex * 4u] = tileLightBitMask.x;
-        lightGridBitMaskData[tileIndex * 4u + 1u] = tileLightBitMask.y;
-        lightGridBitMaskData[tileIndex * 4u + 2u] = tileLightBitMask.z;
-        lightGridBitMaskData[tileIndex * 4u + 3u] = tileLightBitMask.w;
+        // lightGridBitMaskData[tileIndex * 4u] = tileLightBitMask.x;
+        // lightGridBitMaskData[tileIndex * 4u + 1u] = tileLightBitMask.y;
+        // lightGridBitMaskData[tileIndex * 4u + 2u] = tileLightBitMask.z;
+        // lightGridBitMaskData[tileIndex * 4u + 3u] = tileLightBitMask.w;
     }
 }
 
