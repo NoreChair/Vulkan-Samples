@@ -25,9 +25,11 @@ const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::I
 forward_plus::forward_plus()
 {
 	set_name(k_name);
-	//debugDepth = true;
-	//drawAABB = true;
-	//drawLight = true;
+	auto &config = get_configuration();
+
+	config.insert<vkb::BoolSetting>(0, debugDepth, false);
+	config.insert<vkb::BoolSetting>(1, drawAABB, false);
+	config.insert<vkb::BoolSetting>(2, drawLight, false);
 }
 
 forward_plus::~forward_plus()
@@ -46,6 +48,9 @@ bool forward_plus::prepare(Platform &platform)
 	prepare_buffer();
 	prepare_scene();
 	prepare_light();
+
+	//stats->request_stats({ vkb::StatIndex::cpu_cycles,vkb::StatIndex::gpu_cycles });
+	gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get());
 
 	return true;
 }
@@ -178,10 +183,7 @@ void forward_plus::prepare_light()
 	}
 
 	lightBuffer->update(&lightData[0], MAX_LIGHTS_COUNT * sizeof(LightBuffer));
-	if (drawLight)
-	{
-		debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius));
-	}
+	debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius));
 }
 
 void forward_plus::prepare_pipelines()
@@ -343,10 +345,7 @@ void forward_plus::prepare_scene()
 
 	center.push_back(sceneAABB->get_center());
 	extent.push_back(sceneAABB->get_scale());
-	if (drawAABB)
-	{
-		debugDrawPass->add_bounding_box(std::move(center), std::move(extent));
-	}
+	debugDrawPass->add_bounding_box(std::move(center), std::move(extent));
 
 	if (!scene->get_root_node().has_component<sg::AABB>())
 	{
@@ -499,7 +498,6 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 	}
-	//debugDepth = true;
 	if (debugDepth)
 	{
 		// show linear depth pass
@@ -511,6 +509,8 @@ void forward_plus::render(float delta_time)
 		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera);
 		opaquePass->draw(commandBuffer, opaqueNodes);
 
+		debugDrawPass->draw_sphere = drawLight;
+		debugDrawPass->draw_box    = drawAABB;
 		debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get(), camera);
 		debugDrawPass->draw(commandBuffer);
 	}
@@ -586,7 +586,7 @@ void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer)
 void forward_plus::update(float delta_time)
 {
 	update_scene(delta_time);
-	//update_gui(delta_time);
+	update_gui(delta_time);
 	render(delta_time);
 }
 
