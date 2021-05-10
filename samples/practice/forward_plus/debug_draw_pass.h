@@ -17,8 +17,8 @@ class debug_draw_pass : vkb::Subpass
 	debug_draw_pass(vkb::RenderContext &render_context, vkb::ShaderSource &&vertex_shader, vkb::ShaderSource &&fragment_shader);
 	virtual ~debug_draw_pass();
 
-	void prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_target);
-	void set_up(vkb::sg::SubMesh *sphere, vkb::sg::SubMesh *cube);
+	void prepare(vkb::RenderTarget *render_target);
+	void set_up(vkb::sg::SubMesh *sphere, vkb::sg::SubMesh *cube, vkb::sg::Camera *camera);
 	void draw(vkb::CommandBuffer &command_buffer);
 	void bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline);
 

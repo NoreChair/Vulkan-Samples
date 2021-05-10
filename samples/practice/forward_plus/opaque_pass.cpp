@@ -18,9 +18,8 @@ opaque_pass::~opaque_pass()
 {
 }
 
-void opaque_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_target)
+void opaque_pass::prepare(vkb::RenderTarget *render_target)
 {
-	this->render_camera = camera;
 	this->render_target = render_target;
 
 	std::vector<LoadStoreInfo> loadStoreInfos;
@@ -40,8 +39,9 @@ void opaque_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_tar
 	pipeline_state.set_color_blend_state(defaultColorState);
 }
 
-void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data)
+void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera)
 {
+	this->render_camera = camera;
 	light_grid_buffer = light_grid;
 	light_data_buffer = light_data;
 }

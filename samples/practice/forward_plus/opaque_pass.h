@@ -11,8 +11,8 @@ class opaque_pass : public vkb::Subpass
 	opaque_pass(vkb::RenderContext &render_context, vkb::ShaderSource &&vertex_shader, vkb::ShaderSource &&fragment_shader);
 	virtual ~opaque_pass();
 
-	void prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_target);
-	void set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data);
+	void prepare(vkb::RenderTarget *render_target);
+	void set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera);
 	void draw(vkb::CommandBuffer &comman_buffer, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &submeshs);
 
   private:

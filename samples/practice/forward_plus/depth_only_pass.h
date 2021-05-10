@@ -10,7 +10,8 @@ class depth_only_pass : public vkb::Subpass
 	depth_only_pass(vkb::RenderContext &render_context, vkb::ShaderSource &&vertex_shader, vkb::ShaderSource &&fragment_shader);
 	virtual ~depth_only_pass();
 
-	void prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_target);
+	void prepare(vkb::RenderTarget *render_target);
+	void set_up(vkb::sg::Camera *camera) { this->render_camera = camera; };
 	void draw(vkb::CommandBuffer &comman_buffer, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &submeshs);
 
   private:

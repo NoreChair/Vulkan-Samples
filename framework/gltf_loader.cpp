@@ -742,17 +742,13 @@ sg::Scene GLTFLoader::load_scene(int scene_index)
 
 				if (attrib_name == "position")
 				{
+					auto &accessor          = model.accessors.at(attribute.second);
 					submesh->vertices_count = to_u32(model.accessors.at(attribute.second).count);
-
-					glm::vec3 vertex;
-					float *   p_vertex = (float *) &vertex_data[0];
-					for (size_t i = 0; i < submesh->vertices_count; i++)
-					{
-						vertex.x = *(p_vertex++);
-						vertex.y = *(p_vertex++);
-						vertex.z = *(p_vertex++);
-						mesh->update_bounds(vertex);
-					}
+					assert(accessor.minValues.size() == accessor.maxValues.size() && accessor.maxValues.size() == 3);
+					glm::vec3 min{accessor.minValues[0], accessor.minValues[1], accessor.minValues[2]};
+					glm::vec3 max{accessor.maxValues[0], accessor.maxValues[1], accessor.maxValues[2]};
+					mesh->update_bounds(min);
+					mesh->update_bounds(max);
 				}
 
 				core::Buffer buffer{device,

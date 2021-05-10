@@ -18,9 +18,8 @@ depth_only_pass::~depth_only_pass()
 {
 }
 
-void depth_only_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_target)
+void depth_only_pass::prepare(vkb::RenderTarget *render_target)
 {
-	this->render_camera = camera;
 	this->render_target = render_target;
 
 	auto &device = render_context.get_device();

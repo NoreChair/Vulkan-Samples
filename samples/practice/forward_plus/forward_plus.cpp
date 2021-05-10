@@ -5,7 +5,6 @@
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/mesh.h"
 #include "scene_graph/components/pbr_material.h"
-#include "scene_graph/components/perspective_camera.h"
 #include "scene_graph/components/sub_mesh.h"
 #include "scene_graph/node.h"
 
@@ -27,6 +26,8 @@ forward_plus::forward_plus()
 {
 	set_name(k_name);
 	//debugDepth = true;
+	//drawAABB = true;
+	//drawLight = true;
 }
 
 forward_plus::~forward_plus()
@@ -40,11 +41,12 @@ bool forward_plus::prepare(Platform &platform)
 		return false;
 	}
 
-	prepare_resources();
-	prepare_camera();
+	prepare_shaders();
 	prepare_pipelines();
 	prepare_buffer();
+	prepare_scene();
 	prepare_light();
+
 	return true;
 }
 
@@ -95,6 +97,8 @@ void forward_plus::prepare_light()
 	auto &    sceneAABB = scene->get_root_node().get_component<sg::AABB>();
 	glm::vec3 posScale  = sceneAABB.get_max() - sceneAABB.get_min();
 	glm::vec3 posBias   = sceneAABB.get_min();
+	posBias.y += 1000;
+	posScale.y -= 1000;
 
 	// todo: replace this with MT
 	srand(57495);
@@ -174,7 +178,10 @@ void forward_plus::prepare_light()
 	}
 
 	lightBuffer->update(&lightData[0], MAX_LIGHTS_COUNT * sizeof(LightBuffer));
-	debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius));
+	if (drawLight)
+	{
+		debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius));
+	}
 }
 
 void forward_plus::prepare_pipelines()
@@ -202,7 +209,7 @@ void forward_plus::prepare_pipelines()
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
 		depthPrePass    = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
-		depthPrePass->prepare(camera, offScreenRT.get());
+		depthPrePass->prepare(offScreenRT.get());
 	}
 
 	{
@@ -230,18 +237,18 @@ void forward_plus::prepare_pipelines()
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
 		debugDrawPass   = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
-		debugDrawPass->prepare(camera, offScreenRT.get());
+		debugDrawPass->prepare(offScreenRT.get());
 	}
 
 	{
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
 		opaquePass      = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs));
-		opaquePass->prepare(camera, offScreenRT.get());
+		opaquePass->prepare(offScreenRT.get());
 	}
 }
 
-void forward_plus::prepare_resources()
+void forward_plus::prepare_shaders()
 {
 	Device &refDevice = *device.get();
 	{
@@ -308,34 +315,50 @@ void forward_plus::prepare_resources()
 			ShaderProgram::AddShaderSource(std::move(iter->second));
 		}
 	}
-
-	{
-		// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
-		load_scene("scenes/sponza/Sponza01.gltf");
-
-		if (!scene->get_root_node().has_component<sg::AABB>())
-		{
-			auto  sceneAABB = std::make_unique<sg::AABB>();
-			auto &meshs     = scene->get_components<sg::Mesh>();
-
-			for (size_t i = 0; i < meshs.size(); i++)
-			{
-				sceneAABB->update(meshs[i]->get_bounds().get_min());
-				sceneAABB->update(meshs[i]->get_bounds().get_max());
-			}
-			scene->add_component(std::move(sceneAABB), scene->get_root_node());
-		}
-
-		{
-			GLTFLoader loader{*device};
-			sphere_mesh = loader.read_simple_model_from_file("scenes/unit_sphere.gltf", 0);
-			cube_mesh   = loader.read_simple_model_from_file("scenes/unit_cube.gltf", 0);
-		}
-	}
 }
 
-void forward_plus::prepare_camera()
+void forward_plus::prepare_scene()
 {
+	// Scene contain lighting/Texture(both image and sampler)/Material/Mesh/Camera
+	load_scene("scenes/sponza/Sponza01.gltf");
+
+	auto                   sceneAABB = std::make_unique<sg::AABB>();
+	auto &                 meshs     = scene->get_components<sg::Mesh>();
+	std::vector<glm::vec3> center;
+	std::vector<glm::vec3> extent;
+	for (size_t i = 0; i < meshs.size(); i++)
+	{
+		const auto &bounds = meshs[i]->get_bounds();
+		for (auto &node : meshs[i]->get_nodes())
+		{
+			auto     node_transform = node->get_transform().get_world_matrix();
+			sg::AABB world_bounds{bounds.get_min(), bounds.get_max()};
+			world_bounds.transform(node_transform);
+			center.push_back(world_bounds.get_center());
+			extent.push_back(world_bounds.get_scale());
+			sceneAABB->update(world_bounds.get_min());
+			sceneAABB->update(world_bounds.get_max());
+		}
+	}
+
+	center.push_back(sceneAABB->get_center());
+	extent.push_back(sceneAABB->get_scale());
+	if (drawAABB)
+	{
+		debugDrawPass->add_bounding_box(std::move(center), std::move(extent));
+	}
+
+	if (!scene->get_root_node().has_component<sg::AABB>())
+	{
+		scene->add_component(std::move(sceneAABB), scene->get_root_node());
+	}
+
+	{
+		GLTFLoader loader{*device};
+		sphere_mesh = loader.read_simple_model_from_file("scenes/unit_sphere.gltf", 0);
+		cube_mesh   = loader.read_simple_model_from_file("scenes/unit_cube.gltf", 0);
+	}
+
 	auto &camera_node = vkb::add_free_camera(*scene, "main_camera", get_render_context().get_surface_extent());
 
 	camera = &camera_node.get_component<vkb::sg::Camera>();
@@ -360,6 +383,7 @@ void forward_plus::render(float delta_time)
 
 	// depth pre pass
 	{
+		depthPrePass->set_up(camera);
 		depthPrePass->draw(commandBuffer, opaqueNodes);
 	}
 
@@ -484,30 +508,16 @@ void forward_plus::render(float delta_time)
 	}
 	else
 	{
-		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get());
+		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera);
 		opaquePass->draw(commandBuffer, opaqueNodes);
 
-		debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get());
+		debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get(), camera);
 		debugDrawPass->draw(commandBuffer);
 	}
 
 	blit_and_present(commandBuffer);
 	commandBuffer.end();
 	context.submit(commandBuffer);
-}
-
-void forward_plus::update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node)
-{
-	auto &render_frame = get_render_context().get_active_frame();
-	auto  allocation   = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(GlobalUniform), 0);
-	auto &transform    = node->get_transform();
-
-	GlobalUniform globalUniform;
-	globalUniform.model           = transform.get_world_matrix();
-	globalUniform.view_project    = vkb::vulkan_style_projection(camera->get_projection()) * camera->get_view();
-	globalUniform.camera_position = camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
-	allocation.update(globalUniform);
-	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
 }
 
 void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline)
@@ -518,63 +528,6 @@ void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::P
 	commandBuffer.set_rasterization_state(pipeline.get_rasterization_state());
 	commandBuffer.set_viewport_state(pipeline.get_viewport_state());
 	commandBuffer.set_multisample_state(pipeline.get_multisample_state());
-}
-
-bool forward_plus::bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh)
-{
-	auto vertex_input_resources = pipelineLayout.get_resources(ShaderResourceType::Input, VK_SHADER_STAGE_VERTEX_BIT);
-
-	VertexInputState vertex_input_state;
-
-	for (auto &input_resource : vertex_input_resources)
-	{
-		sg::VertexAttribute attribute;
-
-		if (!submesh->get_attribute(input_resource.name, attribute))
-		{
-			continue;
-		}
-
-		VkVertexInputAttributeDescription vertex_attribute{};
-		vertex_attribute.binding  = input_resource.location;
-		vertex_attribute.format   = attribute.format;
-		vertex_attribute.location = input_resource.location;
-		vertex_attribute.offset   = attribute.offset;
-
-		vertex_input_state.attributes.push_back(vertex_attribute);
-
-		VkVertexInputBindingDescription vertex_binding{};
-		vertex_binding.binding = input_resource.location;
-		vertex_binding.stride  = attribute.stride;
-
-		vertex_input_state.bindings.push_back(vertex_binding);
-	}
-
-	commandBuffer.set_vertex_input_state(vertex_input_state);
-
-	// Find submesh vertex buffers matching the shader input attribute names
-	for (auto &input_resource : vertex_input_resources)
-	{
-		const auto &buffer_iter = submesh->vertex_buffers.find(input_resource.name);
-
-		if (buffer_iter != submesh->vertex_buffers.end())
-		{
-			std::vector<std::reference_wrapper<const core::Buffer>> buffers;
-			buffers.emplace_back(std::ref(buffer_iter->second));
-
-			// Bind vertex buffers only for the attribute locations defined
-			commandBuffer.bind_vertex_buffers(input_resource.location, std::move(buffers), {0});
-		}
-	}
-
-	// Draw submesh indexed if indices exists
-	if (submesh->vertex_indices != 0)
-	{
-		// Bind index buffer of submesh
-		commandBuffer.bind_index_buffer(*submesh->index_buffer, submesh->index_offset, submesh->index_type);
-		return true;
-	}
-	return false;
 }
 
 void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer)

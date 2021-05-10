@@ -165,15 +165,14 @@ class forward_plus : public vkb::VulkanSample
 	virtual void                            update(float delta_time) override;
 	virtual void                            input_event(const vkb::InputEvent &input_event) override;
 
-	void prepare_resources();
-	void prepare_camera();
+	void prepare_shaders();
+	void prepare_scene();
 	void prepare_pipelines();
 	void prepare_buffer();
 	void prepare_light();
+
 	void render(float delta_time);
-	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
 	void bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline);
-	bool bind_vertex_input(vkb::CommandBuffer &commandBuffer, vkb::PipelineLayout &pipelineLayout, vkb::sg::SubMesh *submesh = nullptr);
 	void blit_and_present(vkb::CommandBuffer &commandBuffer);
 	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
 
@@ -184,6 +183,8 @@ class forward_plus : public vkb::VulkanSample
 	vkb::sg::Camera *camera{nullptr};
 
 	/*                            Rendering                        */
+	bool drawAABB{false};
+	bool drawLight{false};
 	bool debugDepth{false};
 	bool supportBlit{false};
 

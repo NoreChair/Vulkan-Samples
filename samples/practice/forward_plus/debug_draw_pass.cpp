@@ -13,9 +13,8 @@ debug_draw_pass::~debug_draw_pass()
 {
 }
 
-void debug_draw_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render_target)
+void debug_draw_pass::prepare(vkb::RenderTarget *render_target)
 {
-	this->render_camera = camera;
 	this->render_target = render_target;
 
 	auto &device = render_context.get_device();
@@ -60,8 +59,9 @@ void debug_draw_pass::prepare(vkb::sg::Camera *camera, vkb::RenderTarget *render
 	pipeline_state.set_pipeline_layout(layout);
 }
 
-void debug_draw_pass::set_up(vkb::sg::SubMesh *sphere, vkb::sg::SubMesh *cube)
+void debug_draw_pass::set_up(vkb::sg::SubMesh *sphere, vkb::sg::SubMesh *cube, vkb::sg::Camera *camera)
 {
+	render_camera = camera;
 	sphere_mesh = sphere;
 	cube_mesh   = cube;
 }
