@@ -68,16 +68,18 @@ void AABB::update(const std::vector<glm::vec3> &vertex_data, const std::vector<u
 
 void AABB::transform(glm::mat4 &transform)
 {
-	min = max = glm::vec4(min, 1.0f) * transform;
+	glm::vec3 src_min = min;
+	glm::vec3 src_max = max;
+ 	update(glm::vec4(src_min, 1.0f) * transform);
 
 	// Update bounding box for the remaining 7 corners of the box
-	update(glm::vec4(min.x, min.y, max.z, 1.0f) * transform);
-	update(glm::vec4(min.x, max.y, min.z, 1.0f) * transform);
-	update(glm::vec4(min.x, max.y, max.z, 1.0f) * transform);
-	update(glm::vec4(max.x, min.y, min.z, 1.0f) * transform);
-	update(glm::vec4(max.x, min.y, max.z, 1.0f) * transform);
-	update(glm::vec4(max.x, max.y, min.z, 1.0f) * transform);
-	update(glm::vec4(max, 1.0f) * transform);
+	update(glm::vec4(src_min.x, src_min.y, src_max.z, 1.0f) * transform);
+	update(glm::vec4(src_min.x, src_max.y, src_min.z, 1.0f) * transform);
+	update(glm::vec4(src_min.x, src_max.y, src_max.z, 1.0f) * transform);
+	update(glm::vec4(src_max.x, src_min.y, src_min.z, 1.0f) * transform);
+	update(glm::vec4(src_max.x, src_min.y, src_max.z, 1.0f) * transform);
+	update(glm::vec4(src_max.x, src_max.y, src_min.z, 1.0f) * transform);
+	update(glm::vec4(src_max, 1.0f) * transform);
 }
 
 glm::vec3 AABB::get_scale() const

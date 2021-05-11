@@ -15,20 +15,9 @@ show_depth_pass::~show_depth_pass()
 {
 }
 
-void show_depth_pass::prepare(vkb::RenderTarget *render_target)
+void show_depth_pass::prepare()
 {
-	this->render_target = render_target;
 	auto &device = render_context.get_device();
-
-	std::vector<LoadStoreInfo> loadStoreInfos;
-	loadStoreInfos.emplace_back(LoadStoreInfo{ VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE });
-	loadStoreInfos.emplace_back(LoadStoreInfo{ VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE });
-
-	std::vector<SubpassInfo> subPassInfos;
-	subPassInfos.emplace_back(SubpassInfo{ {}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE });
-
-	render_pass = &device.get_resource_cache().request_render_pass(render_target->get_attachments(), loadStoreInfos, subPassInfos);
-	frame_buffer = &device.get_resource_cache().request_framebuffer(*render_target, *render_pass);
 
 	DepthStencilState postProcessDepthState;        // depth test/write off
 	postProcessDepthState.depth_test_enable = false;
@@ -73,8 +62,6 @@ void show_depth_pass::set_up(vkb::core::Buffer *vertex_buffer, vkb::core::ImageV
 
 void show_depth_pass::draw(vkb::CommandBuffer &command_buffer)
 {
-	std::vector<VkClearValue> clearValue{ initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0) };
-	command_buffer.begin_render_pass(*render_target, *render_pass, *frame_buffer, clearValue);
 	bind_pipeline_state(command_buffer, pipeline_state);
 	const PipelineLayout &layout = pipeline_state.get_pipeline_layout();
 	command_buffer.bind_pipeline_layout(const_cast<PipelineLayout &>(layout));
@@ -82,7 +69,6 @@ void show_depth_pass::draw(vkb::CommandBuffer &command_buffer)
 	command_buffer.set_vertex_input_state(pipeline_state.get_vertex_input_state());
 	command_buffer.bind_vertex_buffers(0, { *screen_quad }, { 0 });
 	command_buffer.draw(3, 1, 0, 0);
-	command_buffer.end_render_pass();
 }
 
 void show_depth_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline)
