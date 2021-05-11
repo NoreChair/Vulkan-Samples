@@ -28,8 +28,20 @@ forward_plus::forward_plus()
 	auto &config = get_configuration();
 
 	config.insert<vkb::BoolSetting>(0, debugDepth, false);
+	config.insert<vkb::BoolSetting>(0, drawAABB, false);
+	config.insert<vkb::BoolSetting>(0, drawLight, false);
+
+	config.insert<vkb::BoolSetting>(1, debugDepth, true);
 	config.insert<vkb::BoolSetting>(1, drawAABB, false);
+	config.insert<vkb::BoolSetting>(1, drawLight, false);
+
+	config.insert<vkb::BoolSetting>(2, debugDepth, false);
+	config.insert<vkb::BoolSetting>(2, drawAABB, true);
 	config.insert<vkb::BoolSetting>(2, drawLight, false);
+
+	config.insert<vkb::BoolSetting>(3, debugDepth, false);
+	config.insert<vkb::BoolSetting>(3, drawAABB, false);
+	config.insert<vkb::BoolSetting>(3, drawLight, true);
 }
 
 forward_plus::~forward_plus()
@@ -163,16 +175,17 @@ void forward_plus::prepare_light()
 
 		uint32_t type = n < MAX_LIGHTS_COUNT / 2 ? 0 : 1;
 
-		glm::vec3 coneDir   = randVecGaussian();
-		float     coneInner = (randFloat() * .2f + .025f) * pi;
-		float     coneOuter = coneInner + randFloat() * .1f * pi;
+		glm::vec3 coneDir      = randVecGaussian();
+		float     coneInner    = (randFloat() * .2f + .025f) * pi;
+		float     coneOuter    = coneInner + randFloat() * .1f * pi;
+		float     halfOuterCos = cos(coneOuter * 0.5f);
 
 		lightData[n].position     = pos;
 		lightData[n].color        = color;
 		lightData[n].coneDir      = coneDir;
 		lightData[n].coneAngles.x = 1.0f / (cos(coneInner) - cos(coneOuter));
 		lightData[n].coneAngles.y = cos(coneOuter);
-		lightData[n].coneAngles.z = cos(coneOuter * 0.5f);
+		lightData[n].coneAngles.z = 1.0f / (halfOuterCos * halfOuterCos);
 		lightData[n].radius       = lightRadius;
 		lightData[n].intensity    = 1.0f;
 		lightData[n].lightType    = type;
@@ -232,21 +245,21 @@ void forward_plus::prepare_pipelines()
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_depth.frag"));
 		showDepthPass   = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
-		showDepthPass->prepare(offScreenRT.get());
+		showDepthPass->prepare();
 	}
 
 	{
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
 		debugDrawPass   = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
-		debugDrawPass->prepare(offScreenRT.get());
+		debugDrawPass->prepare();
 	}
 
 	{
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
-		opaquePass      = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs));
-		opaquePass->prepare(offScreenRT.get());
+		opaquePass      = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), extent2d);
+		opaquePass->prepare();
 	}
 }
 
@@ -337,14 +350,14 @@ void forward_plus::prepare_scene()
 			sg::AABB world_bounds{bounds.get_min(), bounds.get_max()};
 			world_bounds.transform(node_transform);
 			center.push_back(world_bounds.get_center());
-			extent.push_back(world_bounds.get_scale());
+			extent.push_back(world_bounds.get_scale() * 0.5f);
 			sceneAABB->update(world_bounds.get_min());
 			sceneAABB->update(world_bounds.get_max());
 		}
 	}
 
 	center.push_back(sceneAABB->get_center());
-	extent.push_back(sceneAABB->get_scale());
+	extent.push_back(sceneAABB->get_scale() * 0.5f);
 	debugDrawPass->add_bounding_box(std::move(center), std::move(extent));
 
 	if (!scene->get_root_node().has_component<sg::AABB>())
@@ -418,7 +431,7 @@ void forward_plus::render(float delta_time)
 			uint32_t height;
 		} uniforms{camera->get_near_plane(), camera->get_far_plane(), extent.width, extent.height};
 
-		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
+		BufferAllocation allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
 		allocation.update(uniforms);
 		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 2, 0);
 		commandBuffer.dispatch((uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f), 1);
@@ -463,7 +476,7 @@ void forward_plus::render(float delta_time)
 		    MAX_LIGHTS_COUNT,
 		    1.0f / 16.0f};
 
-		BufferAllocation allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
+		BufferAllocation allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
 		allocation.update(uniforms);
 		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
 		commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 1, 0);
@@ -498,21 +511,53 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 	}
+
 	if (debugDepth)
 	{
 		// show linear depth pass
+		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+		auto &render_pass  = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
+		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
+
+		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, clearValue);
 		showDepthPass->set_up(postProcessVB.get(), linearDepthImageView.get());
 		showDepthPass->draw(commandBuffer);
+
+		gui->draw(commandBuffer);
+
+		commandBuffer.end_render_pass();
 	}
 	else
 	{
-		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera);
-		opaquePass->draw(commandBuffer, opaqueNodes);
+		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+		auto &renderPass  = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
+		auto &frameBuffer = device->get_resource_cache().request_framebuffer(*offScreenRT, renderPass);
+
+		commandBuffer.begin_render_pass(*offScreenRT, renderPass, frameBuffer, clearValue);
+
+		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
+		opaquePass->draw(commandBuffer);
 
 		debugDrawPass->draw_sphere = drawLight;
 		debugDrawPass->draw_box    = drawAABB;
 		debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get(), camera);
 		debugDrawPass->draw(commandBuffer);
+
+		gui->draw(commandBuffer);
+
+		commandBuffer.end_render_pass();
 	}
 
 	blit_and_present(commandBuffer);
@@ -588,6 +633,17 @@ void forward_plus::update(float delta_time)
 	update_scene(delta_time);
 	update_gui(delta_time);
 	render(delta_time);
+}
+
+void forward_plus::draw_gui()
+{
+	gui->show_options_window(
+	    /* body = */ [this]() {
+		    ImGui::Checkbox("Show Depth", &debugDepth);
+		    ImGui::Checkbox("Draw AABB", &drawAABB);
+		    ImGui::Checkbox("Draw Light Outline", &drawLight);
+	    },
+	    /* lines = */ 3);
 }
 
 void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)

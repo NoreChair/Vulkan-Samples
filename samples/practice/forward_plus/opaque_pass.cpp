@@ -9,8 +9,9 @@
 using namespace vkb;
 using namespace vkb::sg;
 
-opaque_pass::opaque_pass(RenderContext &render_context, ShaderSource &&vertex_shader, ShaderSource &&fragment_shader) :
-    Subpass{render_context, std::move(vertex_shader), std::move(fragment_shader)}
+opaque_pass::opaque_pass(RenderContext &render_context, ShaderSource &&vertex_shader, ShaderSource &&fragment_shader, VkExtent2D extent) :
+    Subpass{render_context, std::move(vertex_shader), std::move(fragment_shader)},
+    render_extent(extent)
 {
 }
 
@@ -18,19 +19,8 @@ opaque_pass::~opaque_pass()
 {
 }
 
-void opaque_pass::prepare(vkb::RenderTarget *render_target)
+void opaque_pass::prepare()
 {
-	this->render_target = render_target;
-
-	std::vector<LoadStoreInfo> loadStoreInfos;
-	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-
-	std::vector<SubpassInfo> subPassInfos;
-	subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-	render_pass  = &render_context.get_device().get_resource_cache().request_render_pass(render_target->get_attachments(), loadStoreInfos, subPassInfos);
-	frame_buffer = &render_context.get_device().get_resource_cache().request_framebuffer(*render_target, *render_pass);
-
 	DepthStencilState defaultDepthState;
 	pipeline_state.set_depth_stencil_state(defaultDepthState);
 	ColorBlendState           defaultColorState;
@@ -39,23 +29,21 @@ void opaque_pass::prepare(vkb::RenderTarget *render_target)
 	pipeline_state.set_color_blend_state(defaultColorState);
 }
 
-void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera)
+void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *submeshs)
 {
 	this->render_camera = camera;
-	light_grid_buffer = light_grid;
-	light_data_buffer = light_data;
+	light_grid_buffer   = light_grid;
+	light_data_buffer   = light_data;
+	this->draw_meshes   = submeshs;
 }
 
-void opaque_pass::draw(vkb::CommandBuffer &command_buffer, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &submeshs)
+void opaque_pass::draw(vkb::CommandBuffer &command_buffer)
 {
 	Device &device = render_context.get_device();
 
-	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
-	command_buffer.begin_render_pass(*render_target, *render_pass, *frame_buffer, clearValue);
-
 	bind_pipeline_state(command_buffer, pipeline_state);
 
-	for (auto iter = submeshs.begin(); iter != submeshs.end(); iter++)
+	for (auto iter = draw_meshes->begin(); iter != draw_meshes->end(); iter++)
 	{
 		auto node    = iter->second.first;
 		auto submesh = iter->second.second;
@@ -78,7 +66,6 @@ void opaque_pass::draw(vkb::CommandBuffer &command_buffer, std::multimap<float, 
 			command_buffer.draw(submesh->vertices_count, 1, 0, 0);
 		}
 	}
-	command_buffer.end_render_pass();
 }
 
 void opaque_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline)
@@ -107,14 +94,13 @@ void opaque_pass::update_global_uniform_buffers(vkb::CommandBuffer &commandBuffe
 
 void opaque_pass::bind_descriptor(vkb::CommandBuffer &command_buffer, vkb::PipelineLayout &pipeline_layout, vkb::sg::SubMesh *submesh)
 {
-	VkExtent2D extent = render_target->get_extent();
 	struct
 	{
 		glm::vec4 direction_light;
 		glm::vec4 direction_light_color;
 		float     inv_tile_dim;
 		uint32_t  tile_count_x;
-	} lightInfos{sunDirection, sunColor, 1.0f / 16.0f, (uint32_t) glm::ceil(extent.width / 16.0f)};
+	} lightInfos{sunDirection, sunColor, 1.0f / 16.0f, (uint32_t) glm::ceil(render_extent.width / 16.0f)};
 
 	auto allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(lightInfos), 0);
 	allocation.update(lightInfos);

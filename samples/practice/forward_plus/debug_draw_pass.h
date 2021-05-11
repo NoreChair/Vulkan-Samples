@@ -17,7 +17,7 @@ class debug_draw_pass : vkb::Subpass
 	debug_draw_pass(vkb::RenderContext &render_context, vkb::ShaderSource &&vertex_shader, vkb::ShaderSource &&fragment_shader);
 	virtual ~debug_draw_pass();
 
-	void prepare(vkb::RenderTarget *render_target);
+	void prepare();
 	void set_up(vkb::sg::SubMesh *sphere, vkb::sg::SubMesh *cube, vkb::sg::Camera *camera);
 	void draw(vkb::CommandBuffer &command_buffer);
 	void bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline);
@@ -27,17 +27,16 @@ class debug_draw_pass : vkb::Subpass
 	void reset_bounding_sphere() { bounding_sphere.clear(); }
 	void reset_bounding_box() { bounding_cube.clear(); }
 
+	bool draw_sphere = false;
+	bool draw_box    = false;
+
   private:
-	void prepare(){};
 
 	std::vector<instance_attribute> bounding_sphere;
 	std::vector<instance_attribute> bounding_cube;
 
 	vkb::PipelineState pipeline_state;
 	vkb::sg::Camera *  render_camera{nullptr};
-	vkb::RenderPass *  render_pass{nullptr};
-	vkb::Framebuffer * frame_buffer{nullptr};
-	vkb::RenderTarget *render_target{nullptr};
 
 	vkb::sg::SubMesh *sphere_mesh{nullptr};
 	vkb::sg::SubMesh *cube_mesh{nullptr};

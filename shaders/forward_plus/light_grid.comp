@@ -12,7 +12,7 @@ struct LightBufferData{
     vec3 position;              // xyz=pos if light source is sphere
     vec3 color;                 // xyz=rgb
     vec3 coneDir;               // xyz=direction if light source is spot
-    vec3 coneAngles;            // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z=cos(outer/2)
+    vec3 coneAngles;            // x=1.0f/(cos(inner)-cos(outer)), y=cos(inner), z= 1.0/(cos(outer/2) * cos(outer/2))
     float radius;
     float intensity;
     uint lightType;
@@ -102,13 +102,12 @@ bool SpotInFrustum(vec4 frustum[6], LightBufferData light){
 
     for(uint i = 0u; i < 6u; ++i){
         vec3 normal = frustum[i].xyz;
-        float b = PointToPlaneDistance(normal, frustum[i].w, light.position.xyz);
-        if(b < -light.radius){
+        float sphereRadius = light.radius * 0.5 * light.coneAngles.z;
+        vec3 sphereCenter = light.position.xyz + light.coneDir.xyz * sphereRadius;
+        float b = PointToPlaneDistance(normal, frustum[i].w, sphereCenter);
+        if(b < -sphereRadius){
             inSide = false;
             break;
-        }else if (b > -light.radius && b < 0.0){
-            // center out of frustum but intersect with plane
-            // get intersect point and check angle with spot direction
         }
     }
     return inSide;

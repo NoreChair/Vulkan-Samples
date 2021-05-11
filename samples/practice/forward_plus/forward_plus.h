@@ -5,9 +5,9 @@
 
 #include "common/vk_common.h"
 #include "core/shader_module.h"
+#include "debug_draw_pass.h"
 #include "depth_only_pass.h"
 #include "opaque_pass.h"
-#include "debug_draw_pass.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
 #include "show_depth_pass.h"
@@ -157,13 +157,15 @@ class forward_plus : public vkb::VulkanSample
 	virtual ~forward_plus();
 
   private:
-	virtual bool                            prepare(vkb::Platform &platform) override;
-	virtual void                            prepare_render_context() override;
+	virtual bool prepare(vkb::Platform &platform) override;
+	virtual void prepare_render_context() override;
+	virtual void request_gpu_features(vkb::PhysicalDevice &gpu) override;
+	virtual void resize(const uint32_t width, const uint32_t height) override;
+	virtual void update(float delta_time) override;
+	virtual void input_event(const vkb::InputEvent &input_event) override;
+	virtual void draw_gui();
+
 	virtual const std::vector<const char *> get_validation_layers() override;
-	virtual void                            request_gpu_features(vkb::PhysicalDevice &gpu) override;
-	virtual void                            resize(const uint32_t width, const uint32_t height) override;
-	virtual void                            update(float delta_time) override;
-	virtual void                            input_event(const vkb::InputEvent &input_event) override;
 
 	void prepare_shaders();
 	void prepare_scene();
@@ -202,10 +204,10 @@ class forward_plus : public vkb::VulkanSample
 	ComputePassEntry linearDepthPass{};
 	ComputePassEntry lightGridPass{};
 
-	std::unique_ptr<debug_draw_pass> debugDrawPass{nullptr};
 	std::unique_ptr<show_depth_pass> showDepthPass{nullptr};
 	std::unique_ptr<depth_only_pass> depthPrePass{nullptr};
 	std::unique_ptr<opaque_pass>     opaquePass{nullptr};
+	std::unique_ptr<debug_draw_pass> debugDrawPass{nullptr};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
