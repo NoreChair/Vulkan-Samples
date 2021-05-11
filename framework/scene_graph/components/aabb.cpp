@@ -70,16 +70,16 @@ void AABB::transform(glm::mat4 &transform)
 {
 	glm::vec3 src_min = min;
 	glm::vec3 src_max = max;
- 	update(glm::vec4(src_min, 1.0f) * transform);
+ 	update(transform * glm::vec4(src_min, 1.0f));
 
 	// Update bounding box for the remaining 7 corners of the box
-	update(glm::vec4(src_min.x, src_min.y, src_max.z, 1.0f) * transform);
-	update(glm::vec4(src_min.x, src_max.y, src_min.z, 1.0f) * transform);
-	update(glm::vec4(src_min.x, src_max.y, src_max.z, 1.0f) * transform);
-	update(glm::vec4(src_max.x, src_min.y, src_min.z, 1.0f) * transform);
-	update(glm::vec4(src_max.x, src_min.y, src_max.z, 1.0f) * transform);
-	update(glm::vec4(src_max.x, src_max.y, src_min.z, 1.0f) * transform);
-	update(glm::vec4(src_max, 1.0f) * transform);
+	update(transform * glm::vec4(src_min.x, src_min.y, src_max.z, 1.0f));
+	update(transform * glm::vec4(src_min.x, src_max.y, src_min.z, 1.0f));
+	update(transform * glm::vec4(src_min.x, src_max.y, src_max.z, 1.0f));
+	update(transform * glm::vec4(src_max.x, src_min.y, src_min.z, 1.0f));
+	update(transform * glm::vec4(src_max.x, src_min.y, src_max.z, 1.0f));
+	update(transform * glm::vec4(src_max.x, src_max.y, src_min.z, 1.0f));
+	update(transform * glm::vec4(src_max, 1.0f));
 }
 
 glm::vec3 AABB::get_scale() const
