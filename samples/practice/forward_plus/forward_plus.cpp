@@ -114,8 +114,8 @@ void forward_plus::prepare_light()
 	auto &    sceneAABB = scene->get_root_node().get_component<sg::AABB>();
 	glm::vec3 posScale  = sceneAABB.get_max() - sceneAABB.get_min();
 	glm::vec3 posBias   = sceneAABB.get_min();
-	posBias.y += 1000;
-	posScale.y -= 1000;
+	posBias.y += 1200;
+	posScale.y -= 1400;
 
 	// todo: replace this with MT
 	srand(57495);
@@ -167,7 +167,7 @@ void forward_plus::prepare_light()
 	for (uint32_t n = 0; n < MAX_LIGHTS_COUNT; n++)
 	{
 		glm::vec3 pos         = randVecUniform() * posScale + posBias;
-		float     lightRadius = randFloat() * 200.0f + 50.0f;
+		float     lightRadius = randFloat() * 300.0f + 100.0f;
 
 		glm::vec3 color      = randVecUniform();
 		float     colorScale = randFloat() * .3f + .3f;
