@@ -3,6 +3,7 @@ precision highp float;
 
 #define MAX_LIGHTS 128
 #define TILE_SIZE (4 + MAX_LIGHTS)              // align with 128 bit
+#define LIGHT_ATT_CUTOFF 1e-2
 
 layout(location = 0) in vec3 v_pos;     // world position
 layout(location = 1) in vec2 v_uv;
@@ -189,6 +190,18 @@ vec3 saturate(vec3 t)
 	return clamp(t, 0.0, 1.0);
 }
 
+float pow2(float t){
+	return t * t;
+}
+
+float pow4(float t){
+	return t * t * t * t;
+}
+
+float smoothstep01(float t){
+	return t * t * (3.0 - 2.0 * t);
+}
+
 void main(void)
 {
 	vec3 F0 		 = vec3(0.04);
@@ -216,6 +229,7 @@ void main(void)
 
 	vec3 diffuse_color      = base_color.rgb * (1.0 - metallic);
 	vec3 light_contribution = vec3(0.0);
+
     // Direction Light
     {
         vec3 L = -direction_light.xyz;
@@ -229,7 +243,7 @@ void main(void)
 		float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
 		float D   = D_GGX(NdotH, roughness);
 		vec3  Fr  = F * D * Vis;
-        float Fd = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
+        float Fd  = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
         light_contribution += NdotL * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
     }
 
@@ -248,14 +262,23 @@ void main(void)
 
 		vec3 world_to_light = light_data.position - v_pos;
 		float dist			= length(world_to_light);
-		float atten 		= 1.0 / (dist * dist) * light_data.radius * light_data.radius;
+		// https://imdoingitwrong.wordpress.com/2011/02/10/improved-light-attenuation/
+		// float dMax  		= light_data.radius * (sqrt(light_data.intensity / LIGHT_ATT_CUTOFF) - 1.0);
+		// float dPlus 		= dist / (1.0 - pow2((dist / dMax)));
+		// float atten 		= light_data.intensity / pow2(dPlus / light_data.radius + 1.0);
+		float atten = 1.0 - pow4(smoothstep01(saturate(dist / light_data.radius)));
 
+		atten = max(atten, 0.0) * light_data.intensity;
 		vec3 L = normalize(world_to_light);
 		vec3 H = normalize(V + L);
 
 		float LdotH = saturate(dot(L, H));
 		float NdotH = saturate(dot(N, H));
 		float NdotL = saturate(dot(N, L));
+
+		if(NdotL * atten < 1e-4){
+			continue;
+		}
 
 		vec3  F   = F_Schlick(F0, F90, LdotH);
 		float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
@@ -273,18 +296,26 @@ void main(void)
 
 		vec3 world_to_light = light_data.position - v_pos;
 		float dist 			= length(world_to_light);
-		float atten 		= 1.0 / (dist * dist) * light_data.radius * light_data.radius;
+		// float dMax  		= light_data.radius * (sqrt(light_data.intensity / LIGHT_ATT_CUTOFF) - 1.0);
+		// float dPlus 		= dist / (1.0 - pow2((dist / dMax)));
+		// float atten 		= light_data.intensity / pow2(dPlus / light_data.radius + 1.0);
+		float atten = 1.0 - pow4(smoothstep01(saturate(dist / light_data.radius)));
 
 		vec3 L 			   = normalize(world_to_light);
     	float cone_falloff = dot(-L, light_data.coneDir);
     	cone_falloff 	   = saturate((cone_falloff - light_data.coneAngles.y) * light_data.coneAngles.x);
 		atten *= cone_falloff;
 
+		atten = max(atten, 0.0) * light_data.intensity;
 		vec3 H = normalize(V + L);
 
 		float LdotH = saturate(dot(L, H));
 		float NdotH = saturate(dot(N, H));
 		float NdotL = saturate(dot(N, L));
+
+		if(NdotL * atten < 1e-4){
+			continue;
+		}
 
 		vec3  F   = F_Schlick(F0, F90, LdotH);
 		float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);

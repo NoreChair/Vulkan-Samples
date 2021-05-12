@@ -163,6 +163,7 @@ void forward_plus::prepare_light()
 	std::vector<LightBuffer> lightData(MAX_LIGHTS_COUNT);
 	std::vector<glm::vec3>   centers(MAX_LIGHTS_COUNT);
 	std::vector<float>       radius(MAX_LIGHTS_COUNT);
+	std::vector<glm::vec3>   colors(MAX_LIGHTS_COUNT);
 
 	for (uint32_t n = 0; n < MAX_LIGHTS_COUNT; n++)
 	{
@@ -187,16 +188,17 @@ void forward_plus::prepare_light()
 		lightData[n].coneAngles.y = cos(coneOuter);
 		lightData[n].coneAngles.z = 1.0f / (halfOuterCos * halfOuterCos);
 		lightData[n].radius       = lightRadius;
-		lightData[n].intensity    = 1.0f;
+		lightData[n].intensity    = randFloat() * 5.0f;
 		lightData[n].lightType    = type;
 		lightData[n].padding      = 0;
 
 		centers[n] = pos;
 		radius[n]  = lightRadius;
+		colors[n]  = color;
 	}
 
 	lightBuffer->update(&lightData[0], MAX_LIGHTS_COUNT * sizeof(LightBuffer));
-	debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius));
+	debugDrawPass->add_bounding_sphere(std::move(centers), std::move(radius), std::move(colors));
 }
 
 void forward_plus::prepare_pipelines()

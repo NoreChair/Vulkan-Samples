@@ -22,7 +22,7 @@ class debug_draw_pass : vkb::Subpass
 	void draw(vkb::CommandBuffer &command_buffer);
 	void bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline);
 
-	void add_bounding_sphere(std::vector<glm::vec3> &&center, std::vector<float> &&radius);
+	void add_bounding_sphere(std::vector<glm::vec3> &&center, std::vector<float> &&radius, std::vector<glm::vec3>&& color = {});
 	void add_bounding_box(std::vector<glm::vec3> &&center, std::vector<glm::vec3> &&extent);
 	void reset_bounding_sphere() { bounding_sphere.clear(); }
 	void reset_bounding_box() { bounding_cube.clear(); }

@@ -128,7 +128,7 @@ void debug_draw_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb
 	comman_buffer.set_multisample_state(pipeline.get_multisample_state());
 }
 
-void debug_draw_pass::add_bounding_sphere(std::vector<glm::vec3> &&center, std::vector<float> &&radius)
+void debug_draw_pass::add_bounding_sphere(std::vector<glm::vec3> &&center, std::vector<float> &&radius, std::vector<glm::vec3> &&color)
 {
 	assert(center.size() == radius.size());
 	const float f        = 1.0f / RAND_MAX;
@@ -138,7 +138,7 @@ void debug_draw_pass::add_bounding_sphere(std::vector<glm::vec3> &&center, std::
 	{
 		bounding_sphere[src_size + i].center = center[i];
 		bounding_sphere[src_size + i].scale  = glm::vec3(radius[i]);
-		bounding_sphere[src_size + i].color  = glm::vec3(rand() * f, rand() * f, rand() * f);
+		bounding_sphere[src_size + i].color  = color.size() == 0 ? glm::vec3(rand() * f, rand() * f, rand() * f) : color[i];
 	}
 }
 
