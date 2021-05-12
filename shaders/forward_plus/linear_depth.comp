@@ -6,7 +6,6 @@ layout(set = 0, binding = 2) uniform CameraUniforms{
     float far;
     uint width;
     uint height;
-    // float zMagic; // (far - near) / near
 };
 layout(set = 0, r32f, binding = 0) readonly uniform highp image2D sceneDepth;
 layout(set = 0, r32f, binding = 1) writeonly uniform highp image2D linearDepth;
@@ -19,7 +18,8 @@ void main(){
 
     ivec2 id = ivec2(gl_GlobalInvocationID.xy);
     vec4 depth = imageLoad(sceneDepth, id).rrrr;
+
     // reverse z
-    imageStore(linearDepth, id, -near / (near + (near - far) * depth));
-    // imageStore(linearDepth, id, -near / (far + (far - near) * depth));
+    // imageStore(linearDepth, id, near / (near + (near - far) * depth));
+    imageStore(linearDepth, id, 1.0 / (((far - near) / near) * depth + vec4(1.0)));
 }

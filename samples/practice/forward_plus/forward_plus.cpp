@@ -461,6 +461,8 @@ void forward_plus::render(float delta_time)
 		PipelineState defaultState;
 		bind_pipeline_state(commandBuffer, defaultState);
 		commandBuffer.bind_pipeline_layout(*lightGridPass.pipelineLayout);
+		float near_plane = camera->get_near_plane();
+		float far_plane  = camera->get_far_plane();
 
 		struct
 		{
@@ -470,13 +472,15 @@ void forward_plus::render(float delta_time)
 			uint32_t   tileCountX;
 			uint32_t   lightBufferCount;
 			float      invTileDim;
+			float      rcpZMagic;
 		} uniforms{
 		    camera->get_view(),
 		    vkb::vulkan_style_projection(camera->get_projection()),
 		    extent,
 		    dispatchCount.width,
 		    MAX_LIGHTS_COUNT,
-		    1.0f / 16.0f};
+		    1.0f / 16.0f,
+		    near_plane / (far_plane - near_plane)};
 
 		BufferAllocation allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
 		allocation.update(uniforms);
