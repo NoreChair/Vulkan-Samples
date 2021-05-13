@@ -22,7 +22,12 @@ opaque_pass::~opaque_pass()
 void opaque_pass::prepare()
 {
 	DepthStencilState defaultDepthState;
+	defaultDepthState.depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
+	defaultDepthState.depth_write_enable = false;
 	pipeline_state.set_depth_stencil_state(defaultDepthState);
+	RasterizationState rasterState;
+	rasterState.depth_bias_enable = true;
+	pipeline_state.set_rasterization_state(rasterState);
 	ColorBlendState           defaultColorState;
 	ColorBlendAttachmentState defaultAttaState;
 	defaultColorState.attachments.push_back(defaultAttaState);
@@ -40,9 +45,8 @@ void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light
 void opaque_pass::draw(vkb::CommandBuffer &command_buffer)
 {
 	Device &device = render_context.get_device();
-
 	bind_pipeline_state(command_buffer, pipeline_state);
-
+	command_buffer.set_depth_bias(1.1f, 0.0f, 1.1f);
 	for (auto iter = draw_meshes->begin(); iter != draw_meshes->end(); iter++)
 	{
 		auto node    = iter->second.first;
