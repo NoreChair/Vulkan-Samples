@@ -263,9 +263,6 @@ void main(void)
 		vec3 world_to_light = light_data.position - v_pos;
 		float dist			= length(world_to_light);
 		// https://imdoingitwrong.wordpress.com/2011/02/10/improved-light-attenuation/
-		// float dMax  		= light_data.radius * (sqrt(light_data.intensity / LIGHT_ATT_CUTOFF) - 1.0);
-		// float dPlus 		= dist / (1.0 - pow2((dist / dMax)));
-		// float atten 		= light_data.intensity / pow2(dPlus / light_data.radius + 1.0);
 		float atten = 1.0 - pow4(smoothstep01(saturate(dist / light_data.radius)));
 
 		atten = max(atten, 0.0) * light_data.intensity;
@@ -296,9 +293,6 @@ void main(void)
 
 		vec3 world_to_light = light_data.position - v_pos;
 		float dist 			= length(world_to_light);
-		// float dMax  		= light_data.radius * (sqrt(light_data.intensity / LIGHT_ATT_CUTOFF) - 1.0);
-		// float dPlus 		= dist / (1.0 - pow2((dist / dMax)));
-		// float atten 		= light_data.intensity / pow2(dPlus / light_data.radius + 1.0);
 		float atten = 1.0 - pow4(smoothstep01(saturate(dist / light_data.radius)));
 
 		vec3 L 			   = normalize(world_to_light);

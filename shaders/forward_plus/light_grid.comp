@@ -92,7 +92,6 @@ bool ShpereInFrustum(vec4 frustum[6], LightBufferData light){
         // normal point in of frustum, so it should be negative
         if(b < -light.radius){
             inSide = false;
-            break;
         }
     }
     return inSide;
@@ -101,14 +100,14 @@ bool ShpereInFrustum(vec4 frustum[6], LightBufferData light){
 bool SpotInFrustum(vec4 frustum[6], LightBufferData light){
     bool inSide = true;
 
+    float sphereRadius = light.radius * 0.5 * light.coneAngles.z;
+    vec3 sphereCenter = light.position.xyz + light.coneDir.xyz * sphereRadius;
+
     for(uint i = 0u; i < 6u; ++i){
         vec3 normal = frustum[i].xyz;
-        float sphereRadius = light.radius * 0.5 * light.coneAngles.z;
-        vec3 sphereCenter = light.position.xyz + light.coneDir.xyz * sphereRadius;
         float b = PointToPlaneDistance(normal, frustum[i].w, sphereCenter);
         if(b < -sphereRadius){
             inSide = false;
-            break;
         }
     }
     return inSide;
@@ -160,8 +159,8 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     float rcpDepthRange = 1.0 / depthRange;
 
     vec2 tileScale = vec2(viewPort) * invTileDim;
-    vec3 tileBias = vec3(-(2.0 * float(groupID.x) + 1.0 - ceil(tileScale.x)),
-        -(2.0 * float(groupID.y) + 1.0 - ceil(tileScale.y)),
+    vec3 tileBias = vec3(-(2.0 * float(groupID.x) + 1.0 - tileScale.x),
+        -(2.0 * float(groupID.y) + 1.0 - tileScale.y),
         -minDepth * rcpDepthRange
     );
     mat4 projToTile = mat4(tileScale.x, 0.0, 0.0, 0.0,
@@ -171,7 +170,7 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     );
 
     mat4 tileMVP = projToTile * projMatrix * viewMatrix;
-
+    tileMVP = transpose(tileMVP);
     //http://www8.cs.umu.se/kurser/5DV051/HT12/lab/plane_extraction.pdf
     //construct frustum from vp matrix, it should be in view space plane
     vec4 frustumPlanes[6];
@@ -191,9 +190,6 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     uint tileIndex = GetTileIndex(groupID, tileCountX);
     uint tileOffset = GetTileOffset(tileIndex);
     uint totalLightCount = min(lightBufferCount, uint(MAX_LIGHTS));
-
-    lightGridBitMaskData[tileIndex * 4u] = floatBitsToUint(ceil(tileScale.x));
-    lightGridBitMaskData[tileIndex * 4u + 1u] = floatBitsToUint(ceil(tileScale.y));
 
     // per thread pre lightdata to find set of lights that overlap this tile
     for(uint lightIndex = threadIndex; lightIndex < totalLightCount; lightIndex += groupSize){
