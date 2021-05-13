@@ -30,18 +30,6 @@ forward_plus::forward_plus()
 	config.insert<vkb::BoolSetting>(0, debugDepth, false);
 	config.insert<vkb::BoolSetting>(0, drawAABB, false);
 	config.insert<vkb::BoolSetting>(0, drawLight, false);
-
-	config.insert<vkb::BoolSetting>(1, debugDepth, true);
-	config.insert<vkb::BoolSetting>(1, drawAABB, false);
-	config.insert<vkb::BoolSetting>(1, drawLight, false);
-
-	config.insert<vkb::BoolSetting>(2, debugDepth, false);
-	config.insert<vkb::BoolSetting>(2, drawAABB, true);
-	config.insert<vkb::BoolSetting>(2, drawLight, false);
-
-	config.insert<vkb::BoolSetting>(3, debugDepth, false);
-	config.insert<vkb::BoolSetting>(3, drawAABB, false);
-	config.insert<vkb::BoolSetting>(3, drawLight, true);
 }
 
 forward_plus::~forward_plus()
@@ -226,21 +214,17 @@ void forward_plus::prepare_pipelines()
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
 		depthPrePass    = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
-		depthPrePass->prepare(offScreenRT.get());
+		depthPrePass->prepare();
 	}
 
 	{
 		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("linear_depth"));
-		linearDepthPass.pipelineLayout    = &refDevice.get_resource_cache().request_pipeline_layout(linearDepthProgram->GetShaderModules());
-		PipelineState pipelineState;
-		pipelineState.set_pipeline_layout(*linearDepthPass.pipelineLayout);
-		refDevice.get_resource_cache().request_compute_pipeline(pipelineState);
+		linearDepthPass                   = std::make_unique<linear_depth_pass>(device.get(), render_context.get());
+		linearDepthPass->prepare(linearDepthProgram->GetShaderModules());
 
 		ShaderProgram *lightGridProgram = ShaderProgram::Find(std::string("light_grid"));
-		lightGridPass.pipelineLayout    = &refDevice.get_resource_cache().request_pipeline_layout(lightGridProgram->GetShaderModules());
-		PipelineState lightGridState;
-		lightGridState.set_pipeline_layout(*lightGridPass.pipelineLayout);
-		refDevice.get_resource_cache().request_compute_pipeline(lightGridState);
+		lightGridPass                   = std::make_unique<light_grid_pass>(device.get(), render_context.get());
+		lightGridPass->prepare(lightGridProgram->GetShaderModules());
 	}
 
 	{
@@ -397,11 +381,25 @@ void forward_plus::render(float delta_time)
 
 	// depth pre pass
 	{
-		depthPrePass->set_up(camera);
-		depthPrePass->draw(commandBuffer, opaqueNodes);
+		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+		auto &render_pass  = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
+		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
+		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, clearValue);
+
+		depthPrePass->set_up(camera, &opaqueNodes);
+		depthPrePass->draw(commandBuffer);
+
+		commandBuffer.end_render_pass();
 	}
 
 	const ImageView &depthView = offScreenRT->get_views()[1];
+
 	{
 		// linear depth
 		vkb::ImageMemoryBarrier barrier{};
@@ -419,24 +417,8 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 
-		PipelineState defaultState;
-		bind_pipeline_state(commandBuffer, defaultState);
-		commandBuffer.bind_pipeline_layout(*linearDepthPass.pipelineLayout);
-		commandBuffer.bind_input(depthView, 0, 0, 0);
-		commandBuffer.bind_input(*linearDepthImageView, 0, 1, 0);
-
-		struct
-		{
-			float    nearPlane;
-			float    farPlane;
-			uint32_t width;
-			uint32_t height;
-		} uniforms{camera->get_near_plane(), camera->get_far_plane(), extent.width, extent.height};
-
-		BufferAllocation allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
-		allocation.update(uniforms);
-		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 2, 0);
-		commandBuffer.dispatch((uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f), 1);
+		linearDepthPass->set_up(const_cast<ImageView *>(&depthView), linearDepthImageView.get(), camera);
+		linearDepthPass->dispatch(commandBuffer);
 	}
 
 	{
@@ -455,41 +437,10 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
-		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 
-		VkExtent2D    dispatchCount = {(uint32_t) glm::ceil(extent.width / 16.0f), (uint32_t) glm::ceil(extent.height / 16.0f)};
-		PipelineState defaultState;
-		bind_pipeline_state(commandBuffer, defaultState);
-		commandBuffer.bind_pipeline_layout(*lightGridPass.pipelineLayout);
-		float near_plane = camera->get_near_plane();
-		float far_plane  = camera->get_far_plane();
-
-		struct
-		{
-			glm::mat4  viewMatrix;
-			glm::mat4  projMatrix;
-			VkExtent2D viewport;
-			uint32_t   tileCountX;
-			uint32_t   lightBufferCount;
-			float      invTileDim;
-			float      rcpZMagic;
-		} uniforms{
-		    camera->get_view(),
-		    vkb::vulkan_style_projection(camera->get_projection()),
-		    extent,
-		    dispatchCount.width,
-		    MAX_LIGHTS_COUNT,
-		    1.0f / 16.0f,
-		    near_plane / (far_plane - near_plane)};
-
-		BufferAllocation allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniforms));
-		allocation.update(uniforms);
-		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_offset(), 0, 0, 0);
-		commandBuffer.bind_buffer(*lightBuffer, 0, lightBuffer->get_size(), 0, 1, 0);
-		commandBuffer.bind_buffer(*lightGridBuffer, 0, lightGridBuffer->get_size(), 0, 2, 0);
-		commandBuffer.bind_buffer(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), 0, 3, 0);
-		commandBuffer.bind_image(*linearDepthImageView, 0, 4, 0);
-		commandBuffer.dispatch(dispatchCount.width, dispatchCount.height, 1);
+		lightGridPass->set_up(lightBuffer.get(), lightGridBuffer.get(), linearDepthImageView.get(), camera);
+		lightGridPass->dispatch(commandBuffer);
 
 		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -497,7 +448,7 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
-		commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
+		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 	}
 
 	{
@@ -569,16 +520,6 @@ void forward_plus::render(float delta_time)
 	blit_and_present(commandBuffer);
 	commandBuffer.end();
 	context.submit(commandBuffer);
-}
-
-void forward_plus::bind_pipeline_state(vkb::CommandBuffer &commandBuffer, vkb::PipelineState &pipeline)
-{
-	commandBuffer.set_color_blend_state(pipeline.get_color_blend_state());
-	commandBuffer.set_depth_stencil_state(pipeline.get_depth_stencil_state());
-	commandBuffer.set_input_assembly_state(pipeline.get_input_assembly_state());
-	commandBuffer.set_rasterization_state(pipeline.get_rasterization_state());
-	commandBuffer.set_viewport_state(pipeline.get_viewport_state());
-	commandBuffer.set_multisample_state(pipeline.get_multisample_state());
 }
 
 void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer)

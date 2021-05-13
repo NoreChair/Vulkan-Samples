@@ -46,7 +46,7 @@ void opaque_pass::draw(vkb::CommandBuffer &command_buffer)
 {
 	Device &device = render_context.get_device();
 	bind_pipeline_state(command_buffer, pipeline_state);
-	command_buffer.set_depth_bias(1.1f, 0.0f, 1.1f);
+	command_buffer.set_depth_bias(0.1f, 0.0f, 0.1f);
 	for (auto iter = draw_meshes->begin(); iter != draw_meshes->end(); iter++)
 	{
 		auto node    = iter->second.first;

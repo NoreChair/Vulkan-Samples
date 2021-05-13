@@ -18,21 +18,9 @@ depth_only_pass::~depth_only_pass()
 {
 }
 
-void depth_only_pass::prepare(vkb::RenderTarget *render_target)
+void depth_only_pass::prepare()
 {
-	this->render_target = render_target;
-
 	auto &device = render_context.get_device();
-
-	std::vector<LoadStoreInfo> loadStoreInfos;
-	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
-	loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-
-	std::vector<SubpassInfo> subPassInfos;
-	subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-
-	render_pass  = &device.get_resource_cache().request_render_pass(render_target->get_attachments(), loadStoreInfos, subPassInfos);
-	frame_buffer = &device.get_resource_cache().request_framebuffer(*render_target, *render_pass);
 
 	DepthStencilState defaultDepthState;
 	pipeline_state.set_depth_stencil_state(defaultDepthState);
@@ -51,15 +39,19 @@ void depth_only_pass::prepare(vkb::RenderTarget *render_target)
 	pipeline_state.set_pipeline_layout(layout);
 }
 
-void depth_only_pass::draw(vkb::CommandBuffer &comman_buffer, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &submeshs)
+void depth_only_pass::set_up(vkb::sg::Camera *camera, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *submeshs)
+{
+	render_camera = camera;
+	draw_meshs    = submeshs;
+}
+
+void depth_only_pass::draw(vkb::CommandBuffer &comman_buffer)
 {
 	Device &device = render_context.get_device();
 
-	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
-	comman_buffer.begin_render_pass(*render_target, *render_pass, *frame_buffer, clearValue);
 	// update and bind buffer
 	bind_pipeline_state(comman_buffer, pipeline_state);
-	for (auto iter = submeshs.begin(); iter != submeshs.end(); iter++)
+	for (auto iter = draw_meshs->begin(); iter != draw_meshs->end(); iter++)
 	{
 		auto node    = iter->second.first;
 		auto submesh = iter->second.second;
@@ -75,8 +67,6 @@ void depth_only_pass::draw(vkb::CommandBuffer &comman_buffer, std::multimap<floa
 			comman_buffer.draw(submesh->vertices_count, 1, 0, 0);
 		}
 	}
-
-	comman_buffer.end_render_pass();
 }
 
 void depth_only_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline)
