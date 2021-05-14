@@ -1,4 +1,5 @@
 #include "forward_plus.h"
+#include "ShaderProgram.h"
 #include "Utils.h"
 #include "api_vulkan_sample.h"
 #include "gltf_loader.h"
@@ -10,10 +11,6 @@
 
 using namespace vkb;
 using namespace vkb::core;
-
-std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>> forward_plus::ShaderProgram::shaderProgramPool = std::unordered_map<size_t, std::shared_ptr<forward_plus::ShaderProgram>>();
-
-std::unordered_map<size_t, ShaderSource> forward_plus::ShaderProgram::shaderSourcePool = std::unordered_map<size_t, ShaderSource>();
 
 const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::Image &&swapchain_image) -> std::unique_ptr<RenderTarget> {
 	VkFormat                 depth_format = get_suitable_depth_format(swapchain_image.get_device().get_gpu().get_handle());
@@ -156,7 +153,7 @@ void forward_plus::prepare_light()
 	for (uint32_t n = 0; n < MAX_LIGHTS_COUNT; n++)
 	{
 		glm::vec3 pos         = randVecUniform() * posScale + posBias;
-		float     lightRadius = randFloat() * 300.0f + 100.0f;
+		float     lightRadius = randFloat() * 400.0f + 200.0f;
 
 		glm::vec3 color      = randVecUniform();
 		float     colorScale = randFloat() * .3f + .3f;

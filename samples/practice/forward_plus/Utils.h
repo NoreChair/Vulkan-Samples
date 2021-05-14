@@ -1,6 +1,19 @@
 #pragma once
 #include "glm/glm.hpp"
 
+#if defined(DEBUG) || defined(_DEBUG)
+#	define DEBUG_ASSERT(exp, ...) \
+		{                          \
+			if (!(exp))            \
+				LOGD(__VA_ARGS__)  \
+			assert(exp);           \
+		}
+#else
+#	define DEBUG_ASSERT(exp, ...) 0
+#endif
+
+#define MAX_LIGHTS_COUNT 128
+
 struct alignas(16) GlobalUniform
 {
 	glm::mat4 model;
