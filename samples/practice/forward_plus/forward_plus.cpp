@@ -359,6 +359,16 @@ void forward_plus::prepare_scene()
 	camera = &camera_node.get_component<vkb::sg::Camera>();
 	camera->set_far_plane(10000.0f);
 	camera->set_near_plane(0.01f);
+
+	auto &lights       = scene->get_components<sg::Light>();
+	auto  direct_light = std::find_if(lights.begin(), lights.end(), [](sg::Light *iter) -> bool { return iter->get_light_type() == sg::LightType::Directional; });
+	DEBUG_ASSERT(direct_light != lights.end(), "Direction light missing");
+
+	auto light_node          = (*direct_light)->get_node();
+	auto direct_light_camera = std::make_unique<shadow_camera>(sg::LightType::Directional, "light_camera");
+	light_camera             = direct_light_camera.get();
+	light_node->set_component(*light_camera);
+	scene->add_component(std::move(direct_light_camera));
 }
 
 void forward_plus::render(float delta_time)

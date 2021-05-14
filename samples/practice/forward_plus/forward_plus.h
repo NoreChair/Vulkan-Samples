@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <unordered_map>
 
+#include "Components/shadow_camera.h"
 #include "RenderPass/debug_draw_pass.h"
 #include "RenderPass/depth_only_pass.h"
 #include "RenderPass/light_grid_pass.h"
@@ -53,6 +54,7 @@ class forward_plus : public vkb::VulkanSample
 	const std::string k_name  = "Forward Plus";
 
 	vkb::sg::Camera *camera{nullptr};
+	shadow_camera *light_camera{nullptr};
 
 	/*                            Rendering                        */
 	bool drawAABB{false};
