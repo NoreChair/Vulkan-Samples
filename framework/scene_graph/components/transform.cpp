@@ -103,6 +103,13 @@ glm::mat4 Transform::get_world_matrix()
 	return world_matrix;
 }
 
+glm::vec3 Transform::get_world_translation()
+{
+	update_world_transform();
+
+	return world_matrix[3];
+}
+
 void Transform::invalidate_world_matrix()
 {
 	update_world_matrix = true;

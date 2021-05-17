@@ -46,7 +46,7 @@ class Camera : public Component
 
 	virtual glm::mat4 get_projection() = 0;
 
-	glm::mat4 get_view();
+	virtual glm::mat4 get_view();
 
 	void set_node(Node &node);
 

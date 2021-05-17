@@ -66,6 +66,8 @@ class Transform : public Component
 
 	glm::mat4 get_world_matrix();
 
+	glm::vec3 get_world_translation();
+
 	/**
 	 * @brief Marks the world transform invalid if any of
 	 *        the local transform are changed or the parent
