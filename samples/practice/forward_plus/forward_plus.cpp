@@ -62,7 +62,8 @@ void forward_plus::prepare_render_context()
 
 const std::vector<const char *> forward_plus::get_validation_layers()
 {
-	return {"VK_LAYER_LUNARG_standard_validation"};
+	//return {"VK_LAYER_LUNARG_standard_validation"};
+	return {};
 }
 
 void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu)
@@ -194,10 +195,11 @@ void forward_plus::prepare_pipelines()
 	uint32_t windowHeight = extent2d.height;
 
 	VkExtent3D extent{windowWidth, windowHeight, 1};
-
+	VkExtent3D shadowExtent{2048, 2048, 1};
 	// Create Render Image
 	Image depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	Image colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image shadowImage(refDevice, shadowExtent, VK_FORMAT_D16_UNORM, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	linearDepthImage     = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
@@ -207,14 +209,21 @@ void forward_plus::prepare_pipelines()
 	offScreenImgs.emplace_back(std::move(depthImage));
 	offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenImgs));
 
+	std::vector<Image> shadowImgs;
+	shadowImgs.emplace_back(std::move(shadowImage));
+	shadowMapRT = std::make_shared<RenderTarget>(std::move(shadowImgs));
+
 	{
 		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
 		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
 		depthPrePass    = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
 		depthPrePass->prepare();
-	}
 
-	{
+		vs         = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
+		fs         = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
+		shadowPass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
+		shadowPass->prepare();
+
 		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("linear_depth"));
 		linearDepthPass                   = std::make_unique<linear_depth_pass>(device.get(), render_context.get());
 		linearDepthPass->prepare(linearDepthProgram->GetShaderModules());
@@ -222,26 +231,20 @@ void forward_plus::prepare_pipelines()
 		ShaderProgram *lightGridProgram = ShaderProgram::Find(std::string("light_grid"));
 		lightGridPass                   = std::make_unique<light_grid_pass>(device.get(), render_context.get());
 		lightGridPass->prepare(lightGridProgram->GetShaderModules());
-	}
 
-	{
-		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
-		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_depth.frag"));
-		showDepthPass   = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
+		vs            = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
+		fs            = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.frag"));
+		showDepthPass = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
 		showDepthPass->prepare();
-	}
 
-	{
-		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
-		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
-		debugDrawPass   = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
+		vs            = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
+		fs            = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
+		debugDrawPass = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
 		debugDrawPass->prepare();
-	}
 
-	{
-		ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
-		ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
-		opaquePass      = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), extent2d);
+		vs         = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
+		fs         = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
+		opaquePass = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), extent2d);
 		opaquePass->prepare();
 	}
 }
@@ -267,7 +270,7 @@ void forward_plus::prepare_shaders()
 		std::vector<RProgramSources> shaderSourceFiles{
 		    {"depth_only", "forward_plus/depth_only.vert", "forward_plus/depth_only.frag"},
 		    {"pbr_plus", "forward_plus/pbr_plus.vert", "forward_plus/pbr_plus.frag"},
-		    {"debug_depth", "forward_plus/screen_base.vert", "forward_plus/debug_depth.frag"},
+		    {"screen_base", "forward_plus/screen_base.vert", "forward_plus/screen_base.frag"},
 		    {"debug_draw", "forward_plus/debug_draw.vert", "forward_plus/debug_draw.frag"},
 		};
 		std::vector<CProgramSources> computeSourceFiles{
@@ -343,11 +346,6 @@ void forward_plus::prepare_scene()
 	extent.push_back(sceneAABB->get_scale() * 0.5f);
 	debugDrawPass->add_bounding_box(std::move(center), std::move(extent));
 
-	if (!scene->get_root_node().has_component<sg::AABB>())
-	{
-		scene->add_component(std::move(sceneAABB), scene->get_root_node());
-	}
-
 	{
 		GLTFLoader loader{*device};
 		sphere_mesh = loader.read_simple_model_from_file("scenes/unit_sphere.gltf", 0);
@@ -364,26 +362,71 @@ void forward_plus::prepare_scene()
 	auto  direct_light = std::find_if(lights.begin(), lights.end(), [](sg::Light *iter) -> bool { return iter->get_light_type() == sg::LightType::Directional; });
 	DEBUG_ASSERT(direct_light != lights.end(), "Direction light missing");
 
+	// hack sun direction
+	sg::LightProperties sunLight;
+	sunLight.direction = glm::normalize(glm::vec3(-1.0, -1.0, 0.0));
+
 	auto light_node          = (*direct_light)->get_node();
-	auto direct_light_camera = std::make_unique<shadow_camera>(sg::LightType::Directional, "light_camera");
-	light_camera             = direct_light_camera.get();
-	light_node->set_component(*light_camera);
+	auto direct_light_camera = std::make_unique<shadow_camera>("light_camera");
+	direct_light_camera->set_node(*light_node);
+	light_node->set_component(*direct_light_camera);
+
+	light_camera              = direct_light_camera.get();
+	glm::vec2 shadowMapExtent = glm::vec2(shadowMapRT->get_extent().width, shadowMapRT->get_extent().height);
+	(*direct_light)->set_properties(sunLight);
+	light_camera->set_up(sunLight.direction, sceneAABB->get_center(), glm::vec3(5000, 5000, 5000), shadowMapExtent, 16);
 	scene->add_component(std::move(direct_light_camera));
+
+	if (!scene->get_root_node().has_component<sg::AABB>())
+	{
+		scene->add_component(std::move(sceneAABB), scene->get_root_node());
+	}
 }
 
 void forward_plus::render(float delta_time)
 {
 	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> opaqueNodes;
 	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> transparentNodes;
-	get_sorted_nodes(opaqueNodes, transparentNodes);
+	std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> shadowNodes;
+
+	sg::Transform &mainCameraRTS  = camera->get_node()->get_transform();
+	glm::vec3      cameraForward  = glm::mat3(mainCameraRTS.get_world_matrix()) * glm::vec3(0.0, 0.0, 1.0);
+	sg::Transform &lightCameraRTS = light_camera->get_node()->get_transform();
+	glm::vec3      lightForward   = glm::mat3(lightCameraRTS.get_world_matrix()) * glm::vec3(0.0, 0.0, 1.0);
+
+	get_sorted_nodes(cameraForward, mainCameraRTS.get_world_translation(), &opaqueNodes, &transparentNodes);
+	get_sorted_nodes(lightForward, light_camera->get_shadow_center(), &shadowNodes);
 
 	// reverse z
-	std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
-	VkExtent2D                extent  = get_render_context().get_surface_extent();
-	RenderContext &           context = get_render_context();
+	std::vector<VkClearValue>
+	    clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
+	VkExtent2D     extent  = get_render_context().get_surface_extent();
+	RenderContext &context = get_render_context();
 
 	CommandBuffer &commandBuffer = context.begin();
 	commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+	{
+		auto &     shadowImage = shadowMapRT->get_views()[0].get_image();
+		VkExtent2D shadowExtent{shadowImage.get_extent().width, shadowImage.get_extent().height};
+		set_viewport_and_scissor(commandBuffer, shadowExtent);
+
+		std::vector<LoadStoreInfo> loadStoreInfos;
+		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+
+		std::vector<SubpassInfo> subPassInfos;
+		subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+		auto &render_pass  = device->get_resource_cache().request_render_pass(shadowMapRT->get_attachments(), loadStoreInfos, subPassInfos);
+		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*shadowMapRT, render_pass);
+		commandBuffer.begin_render_pass(*shadowMapRT, render_pass, frame_buffer, clearValue);
+
+		shadowPass->set_up(light_camera, &shadowNodes);
+		shadowPass->draw(commandBuffer);
+
+		commandBuffer.end_render_pass();
+	}
+
 	set_viewport_and_scissor(commandBuffer, extent);
 
 	// depth pre pass
@@ -490,7 +533,7 @@ void forward_plus::render(float delta_time)
 		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
 
 		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, clearValue);
-		showDepthPass->set_up(postProcessVB.get(), linearDepthImageView.get());
+		showDepthPass->set_up(postProcessVB.get(), const_cast<ImageView*>(&shadowMapRT->get_views()[0]));
 		showDepthPass->draw(commandBuffer);
 
 		gui->draw(commandBuffer);
@@ -600,10 +643,9 @@ void forward_plus::draw_gui()
 	    /* lines = */ 3);
 }
 
-void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> &transparent_nodes)
+void forward_plus::get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *transparent_nodes)
 {
-	auto camera_transform = camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
-	auto meshes           = scene->get_components<sg::Mesh>();
+	auto meshes = scene->get_components<sg::Mesh>();
 	for (auto &mesh : meshes)
 	{
 		for (auto &node : mesh->get_nodes())
@@ -615,17 +657,18 @@ void forward_plus::get_sorted_nodes(std::multimap<float, std::pair<sg::Node *, s
 			sg::AABB world_bounds{mesh_bounds.get_min(), mesh_bounds.get_max()};
 			world_bounds.transform(node_transform);
 
-			float distance = glm::length(camera_transform - world_bounds.get_center());
+			glm::vec3 delta    = world_bounds.get_center() - position;
+			float     distance = glm::dot(direction, delta);
 
 			for (auto &sub_mesh : mesh->get_submeshes())
 			{
-				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend)
+				if (sub_mesh->get_material()->alpha_mode == sg::AlphaMode::Blend && transparent_nodes != nullptr)
 				{
-					transparent_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+					transparent_nodes->emplace(distance, std::make_pair(node, sub_mesh));
 				}
 				else
 				{
-					opaque_nodes.emplace(distance, std::make_pair(node, sub_mesh));
+					opaque_nodes->emplace(distance, std::make_pair(node, sub_mesh));
 				}
 			}
 		}

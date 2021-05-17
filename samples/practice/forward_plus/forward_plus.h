@@ -47,14 +47,14 @@ class forward_plus : public vkb::VulkanSample
 
 	void render(float delta_time);
 	void blit_and_present(vkb::CommandBuffer &commandBuffer);
-	void get_sorted_nodes(std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> &transparent_nodes);
+	void get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>>* opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>>* transparent_nodes = nullptr);
 
   private:
 	const std::string k_title = "Vulkan Example";
 	const std::string k_name  = "Forward Plus";
 
 	vkb::sg::Camera *camera{nullptr};
-	shadow_camera *light_camera{nullptr};
+	shadow_camera *  light_camera{nullptr};
 
 	/*                            Rendering                        */
 	bool drawAABB{false};
@@ -68,15 +68,17 @@ class forward_plus : public vkb::VulkanSample
 	std::shared_ptr<vkb::core::Buffer>    lightMaskBuffer{nullptr};
 	std::shared_ptr<vkb::core::Buffer>    postProcessVB{nullptr};
 	std::shared_ptr<vkb::RenderTarget>    offScreenRT{nullptr};
+	std::shared_ptr<vkb::RenderTarget>    shadowMapRT{nullptr};
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
 
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
 	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};
 
-	std::unique_ptr<light_grid_pass>   lightGridPass{nullptr};
-	std::unique_ptr<linear_depth_pass> linearDepthPass{nullptr};
-	std::unique_ptr<show_depth_pass>   showDepthPass{nullptr};
 	std::unique_ptr<depth_only_pass>   depthPrePass{nullptr};
+	std::unique_ptr<depth_only_pass>   shadowPass{nullptr};
+	std::unique_ptr<linear_depth_pass> linearDepthPass{nullptr};
+	std::unique_ptr<light_grid_pass>   lightGridPass{nullptr};
+	std::unique_ptr<show_depth_pass>   showDepthPass{nullptr};
 	std::unique_ptr<opaque_pass>       opaquePass{nullptr};
 	std::unique_ptr<debug_draw_pass>   debugDrawPass{nullptr};
 };
