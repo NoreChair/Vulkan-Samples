@@ -1,5 +1,5 @@
 #pragma once
-#include "glm/glm.hpp"
+#include "common/glm_common.h"
 
 #if defined(DEBUG) || defined(_DEBUG)
 #	define DEBUG_ASSERT(exp, ...) \
