@@ -374,7 +374,7 @@ void forward_plus::prepare_scene()
 	light_camera              = direct_light_camera.get();
 	glm::vec2 shadowMapExtent = glm::vec2(shadowMapRT->get_extent().width, shadowMapRT->get_extent().height);
 	(*direct_light)->set_properties(sunLight);
-	light_camera->set_up(sunLight.direction, sceneAABB->get_center(), glm::vec3(5000, 5000, 5000), shadowMapExtent, 16);
+	light_camera->set_up(sunLight.direction, sceneAABB->get_center(), glm::vec3(2500, 2500, 2500), shadowMapExtent, 16);
 	scene->add_component(std::move(direct_light_camera));
 
 	if (!scene->get_root_node().has_component<sg::AABB>())
@@ -533,7 +533,7 @@ void forward_plus::render(float delta_time)
 		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
 
 		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, clearValue);
-		showDepthPass->set_up(postProcessVB.get(), const_cast<ImageView*>(&shadowMapRT->get_views()[0]));
+		showDepthPass->set_up(postProcessVB.get(), const_cast<ImageView *>(&shadowMapRT->get_views()[0]));
 		showDepthPass->draw(commandBuffer);
 
 		gui->draw(commandBuffer);

@@ -39,7 +39,7 @@ void shadow_camera::set_up(glm::vec3 light_direction, glm::vec3 center, glm::vec
 {
 	shadow_bound = bound;
 
-	glm::mat3 world_to_camera_rotation = glm::lookAtRH(glm::vec3(0.0), light_direction, glm::vec3(0.0, 0.0, 1.0));
+	glm::mat3 world_to_camera_rotation = glm::lookAt(light_direction, glm::vec3(0.0), glm::vec3(0.0, 1.0, 0.0));
 	glm::mat3 camera_to_world_rotation = glm::transpose(world_to_camera_rotation);
 
 	glm::vec3 rcp_bound      = 1.0f / shadow_bound;
@@ -61,12 +61,15 @@ void shadow_camera::set_up(glm::vec3 light_direction, glm::vec3 center, glm::vec
 	else
 	{
 		glm::mat4 local = camera_to_world_matrix * glm::inverse(node->get_parent()->get_transform().get_world_matrix());
-		node->get_transform().set_matrix(local);
+		node->get_transform().set_rotation(glm::toQuat(glm::mat3(local)));
+		node->get_transform().set_translation(local[3]);
 	}
 
-	projection_matrix = glm::orthoRH(-bound.x, bound.x, bound.y, -bound.y, -bound.z, bound.z);
+	projection_matrix = glm::orthoRH(-bound.x, bound.x, -bound.y, bound.y, -bound.z, bound.z);
 	//glm::scale(glm::vec3(2.0, 2.0, 1.0) * rcp_bound);
-	view_projection_matrix = projection_matrix * world_to_camera_matrix;
+	auto proj = projection_matrix;
+	proj[1][1] *= -1.0;
+	view_projection_matrix = proj * world_to_camera_matrix;
 	shadow_matrix          = glm::scale(glm::vec3(0.5, -0.5, 1.0));
 	shadow_matrix[3]       = glm::vec4(0.5, 0.5, 0.0, 1.0);
 	shadow_matrix          = shadow_matrix * view_projection_matrix;
