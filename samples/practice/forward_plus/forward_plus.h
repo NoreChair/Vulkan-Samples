@@ -15,6 +15,7 @@
 #include "RenderPass/light_grid_pass.h"
 #include "RenderPass/linear_depth_pass.h"
 #include "RenderPass/opaque_pass.h"
+#include "RenderPass/screen_shadow_pass.h"
 #include "RenderPass/show_depth_pass.h"
 
 class vkb::sg::Node;
@@ -47,7 +48,7 @@ class forward_plus : public vkb::VulkanSample
 
 	void render(float delta_time);
 	void blit_and_present(vkb::CommandBuffer &commandBuffer);
-	void get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>>* opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>>* transparent_nodes = nullptr);
+	void get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *transparent_nodes = nullptr);
 
   private:
 	const std::string k_title = "Vulkan Example";
@@ -63,6 +64,7 @@ class forward_plus : public vkb::VulkanSample
 	bool supportBlit{false};
 
 	std::shared_ptr<vkb::core::Image>     linearDepthImage{nullptr};
+	std::shared_ptr<vkb::core::Image>     screenShadowImage{nullptr};
 	std::shared_ptr<vkb::core::Buffer>    lightBuffer{nullptr};
 	std::shared_ptr<vkb::core::Buffer>    lightGridBuffer{nullptr};
 	std::shared_ptr<vkb::core::Buffer>    lightMaskBuffer{nullptr};
@@ -70,17 +72,19 @@ class forward_plus : public vkb::VulkanSample
 	std::shared_ptr<vkb::RenderTarget>    offScreenRT{nullptr};
 	std::shared_ptr<vkb::RenderTarget>    shadowMapRT{nullptr};
 	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
+	std::shared_ptr<vkb::core::ImageView> screenShadowImageView{nullptr};
 
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
 	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};
 
-	std::unique_ptr<depth_only_pass>   depthPrePass{nullptr};
-	std::unique_ptr<depth_only_pass>   shadowPass{nullptr};
-	std::unique_ptr<linear_depth_pass> linearDepthPass{nullptr};
-	std::unique_ptr<light_grid_pass>   lightGridPass{nullptr};
-	std::unique_ptr<show_depth_pass>   showDepthPass{nullptr};
-	std::unique_ptr<opaque_pass>       opaquePass{nullptr};
-	std::unique_ptr<debug_draw_pass>   debugDrawPass{nullptr};
+	std::unique_ptr<depth_only_pass>    depthPrePass{nullptr};
+	std::unique_ptr<depth_only_pass>    shadowPass{nullptr};
+	std::unique_ptr<screen_shadow_pass> screenShadowPass{nullptr};
+	std::unique_ptr<linear_depth_pass>  linearDepthPass{nullptr};
+	std::unique_ptr<light_grid_pass>    lightGridPass{nullptr};
+	std::unique_ptr<show_depth_pass>    showDepthPass{nullptr};
+	std::unique_ptr<opaque_pass>        opaquePass{nullptr};
+	std::unique_ptr<debug_draw_pass>    debugDrawPass{nullptr};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();

@@ -1,0 +1,41 @@
+#version 320 es
+precision highp float;
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    uvec2 extent;
+    vec2 rcpExtent;
+    vec4 cameraPosition;
+    vec4 cameraCorner; // left bottom
+    vec4 cameraProjectPlane[2]; // h v
+    mat4 shadowMatrix;
+};
+
+layout(set = 0, binding = 1) uniform sampler2D linearDepth;
+layout(set = 0, binding = 2) uniform sampler2D shadowMap;
+layout(set = 0, binding = 3) writeonly uniform highp image2D screenShadow;
+
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+void main(){
+    uvec2 threadIndex = gl_GlobalInvocationID.xy;
+
+    if(threadIndex.x >= extent.x || threadIndex.y >= extent.y){
+        return;
+    }
+
+    vec2 uv = vec2(threadIndex) * rcpExtent;
+    uv.y = 1.0 - uv.y;
+    float screenDepth = texelFetch(linearDepth, ivec2(threadIndex), 0).r;
+
+    vec3 projectPoint = cameraCorner.xyz + cameraProjectPlane[0].xyz * uv.x + cameraProjectPlane[1].xyz * uv.y;
+    vec3 viewRay = projectPoint - cameraPosition.xyz;
+    vec3 worldPos = viewRay * screenDepth;
+
+    vec3 comparePoint = (shadowMatrix * vec4(worldPos, 1.0)).xyz;
+    vec2 shadowUV = comparePoint.xy;
+
+    float compareDepth = comparePoint.z;
+    float shadowDepth = textureLod(shadowMap, shadowUV, 0.0).r;
+
+}

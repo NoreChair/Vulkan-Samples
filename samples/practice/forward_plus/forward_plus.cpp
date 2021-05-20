@@ -201,8 +201,10 @@ void forward_plus::prepare_pipelines()
 	Image colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	Image shadowImage(refDevice, shadowExtent, VK_FORMAT_D16_UNORM, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
-	linearDepthImage     = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
+	linearDepthImage      = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	linearDepthImageView  = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
+	screenShadowImage     = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	screenShadowImageView = std::make_shared<ImageView>(*screenShadowImage, VK_IMAGE_VIEW_TYPE_2D);
 
 	std::vector<Image> offScreenImgs;
 	offScreenImgs.emplace_back(std::move(colorImage));
@@ -224,13 +226,17 @@ void forward_plus::prepare_pipelines()
 		shadowPass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
 		shadowPass->prepare();
 
-		ShaderProgram *linearDepthProgram = ShaderProgram::Find(std::string("linear_depth"));
-		linearDepthPass                   = std::make_unique<linear_depth_pass>(device.get(), render_context.get());
-		linearDepthPass->prepare(linearDepthProgram->GetShaderModules());
+		auto *computeProgram = ShaderProgram::Find(std::string("screen_shadow"));
+		screenShadowPass     = std::make_unique<screen_shadow_pass>(device.get(), render_context.get());
+		screenShadowPass->prepare(computeProgram->GetShaderModules());
 
-		ShaderProgram *lightGridProgram = ShaderProgram::Find(std::string("light_grid"));
-		lightGridPass                   = std::make_unique<light_grid_pass>(device.get(), render_context.get());
-		lightGridPass->prepare(lightGridProgram->GetShaderModules());
+		computeProgram  = ShaderProgram::Find(std::string("linear_depth"));
+		linearDepthPass = std::make_unique<linear_depth_pass>(device.get(), render_context.get());
+		linearDepthPass->prepare(computeProgram->GetShaderModules());
+
+		computeProgram = ShaderProgram::Find(std::string("light_grid"));
+		lightGridPass  = std::make_unique<light_grid_pass>(device.get(), render_context.get());
+		lightGridPass->prepare(computeProgram->GetShaderModules());
 
 		vs            = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
 		fs            = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.frag"));
@@ -276,7 +282,7 @@ void forward_plus::prepare_shaders()
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
 		    {"light_grid", "forward_plus/light_grid.comp"},
-		};
+		    {"screen_shadow", "forward_plus/screen_shadow.comp"}};
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
@@ -448,10 +454,9 @@ void forward_plus::render(float delta_time)
 		commandBuffer.end_render_pass();
 	}
 
-	const ImageView &depthView = offScreenRT->get_views()[1];
-
+	ImageView &depthView     = const_cast<ImageView &>(offScreenRT->get_views()[1]);
+	ImageView &shadowMapView = const_cast<ImageView &>(shadowMapRT->get_views()[0]);
 	{
-		// linear depth
 		vkb::ImageMemoryBarrier barrier{};
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -467,7 +472,13 @@ void forward_plus::render(float delta_time)
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
 
-		linearDepthPass->set_up(const_cast<ImageView *>(&depthView), linearDepthImageView.get(), camera);
+		// screen shadow
+		screenShadowPass->set_up(&depthView, &shadowMapView, screenShadowImageView.get());
+		screenShadowPass->set_camera(camera, light_camera);
+		screenShadowPass->dispatch(commandBuffer);
+
+		// linear depth
+		linearDepthPass->set_up(&depthView, linearDepthImageView.get(), camera);
 		linearDepthPass->dispatch(commandBuffer);
 	}
 
