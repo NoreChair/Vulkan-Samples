@@ -23,5 +23,5 @@ void main(){
     a_uv     = texcoord_0;
     a_normal = (model * vec4(normal, 0.0)).rgb;
 
-    gl_Position = view_proj * world_pos; 
+    gl_Position = view_proj * world_pos;
 }

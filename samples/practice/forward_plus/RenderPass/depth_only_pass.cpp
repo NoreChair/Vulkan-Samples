@@ -22,9 +22,6 @@ void depth_only_pass::prepare()
 {
 	auto &device = render_context.get_device();
 
-	DepthStencilState defaultDepthState;
-	pipeline_state.set_depth_stencil_state(defaultDepthState);
-
 	ColorBlendState           depthOnlyColorState;
 	ColorBlendAttachmentState depthOnlyAttaState;
 	depthOnlyAttaState.color_write_mask = 0;
@@ -39,6 +36,19 @@ void depth_only_pass::prepare()
 	pipeline_state.set_pipeline_layout(layout);
 }
 
+void depth_only_pass::set_as_shadow_pipeline()
+{
+	isShadowPass = true;
+
+	DepthStencilState shadowDepthState;
+	shadowDepthState.depth_compare_op = VK_COMPARE_OP_LESS;
+	pipeline_state.set_depth_stencil_state(shadowDepthState);
+
+	RasterizationState rasterState;
+	rasterState.depth_bias_enable = true;
+	pipeline_state.set_rasterization_state(rasterState);
+}
+
 void depth_only_pass::set_up(vkb::sg::Camera *camera, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *submeshs)
 {
 	render_camera = camera;
@@ -48,6 +58,10 @@ void depth_only_pass::set_up(vkb::sg::Camera *camera, std::multimap<float, std::
 void depth_only_pass::draw(vkb::CommandBuffer &comman_buffer)
 {
 	Device &device = render_context.get_device();
+
+	if (isShadowPass) {
+		comman_buffer.set_depth_bias(0.1f, 0.0f, 0.1f);
+	}
 
 	// update and bind buffer
 	bind_pipeline_state(comman_buffer, pipeline_state);
@@ -88,7 +102,7 @@ void depth_only_pass::update_global_uniform_buffers(vkb::CommandBuffer &commandB
 	GlobalUniform globalUniform;
 	globalUniform.model           = transform.get_world_matrix();
 	globalUniform.view_project    = vkb::vulkan_style_projection(render_camera->get_projection()) * render_camera->get_view();
-	globalUniform.camera_position = render_camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
+	globalUniform.camera_position = render_camera->get_node()->get_component<vkb::sg::Transform>().get_world_translation();
 	allocation.update(globalUniform);
 	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
 }

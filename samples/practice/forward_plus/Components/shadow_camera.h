@@ -12,8 +12,6 @@ class shadow_camera : public vkb::sg::Camera
 
 	virtual std::type_index get_type() override;
 
-	glm::mat4 get_shadow_matrix();
-
 	glm::mat4 get_projection() override;
 
 	glm::mat4 get_view() override;

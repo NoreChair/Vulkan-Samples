@@ -88,8 +88,8 @@ void forward_plus::prepare_buffer()
 
 	lightBuffer     = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
 	lightGridBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * (MAX_LIGHTS_COUNT + 4) * tileCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	lightMaskBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * tileCount * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	postProcessVB   = std::make_shared<Buffer>(refDevice, sizeof(float) * 9, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+	//lightMaskBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * tileCount * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	postProcessVB = std::make_shared<Buffer>(refDevice, sizeof(float) * 9, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	float fullScreenTriangle[] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
 	postProcessVB->update(&fullScreenTriangle, sizeof(float) * 9);
@@ -199,7 +199,7 @@ void forward_plus::prepare_pipelines()
 	// Create Render Image
 	Image depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	Image colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-	Image shadowImage(refDevice, shadowExtent, VK_FORMAT_D16_UNORM, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	Image shadowImage(refDevice, shadowExtent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	linearDepthImage      = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	linearDepthImageView  = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
@@ -225,6 +225,7 @@ void forward_plus::prepare_pipelines()
 		fs         = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
 		shadowPass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
 		shadowPass->prepare();
+		shadowPass->set_as_shadow_pipeline();
 
 		auto *computeProgram = ShaderProgram::Find(std::string("screen_shadow"));
 		screenShadowPass     = std::make_unique<screen_shadow_pass>(device.get(), render_context.get());
@@ -405,7 +406,9 @@ void forward_plus::render(float delta_time)
 
 	// reverse z
 	std::vector<VkClearValue>
-	    clearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
+	    zeroClearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
+	std::vector<VkClearValue>
+	    oneClearValue{initializers::clear_depth_stencil_value(1.0, 0)};
 	VkExtent2D     extent  = get_render_context().get_surface_extent();
 	RenderContext &context = get_render_context();
 
@@ -425,7 +428,7 @@ void forward_plus::render(float delta_time)
 
 		auto &render_pass  = device->get_resource_cache().request_render_pass(shadowMapRT->get_attachments(), loadStoreInfos, subPassInfos);
 		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*shadowMapRT, render_pass);
-		commandBuffer.begin_render_pass(*shadowMapRT, render_pass, frame_buffer, clearValue);
+		commandBuffer.begin_render_pass(*shadowMapRT, render_pass, frame_buffer, oneClearValue);
 
 		shadowPass->set_up(light_camera, &shadowNodes);
 		shadowPass->draw(commandBuffer);
@@ -446,7 +449,7 @@ void forward_plus::render(float delta_time)
 
 		auto &render_pass  = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
 		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
-		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, clearValue);
+		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, zeroClearValue);
 
 		depthPrePass->set_up(camera, &opaqueNodes);
 		depthPrePass->draw(commandBuffer);
@@ -463,6 +466,7 @@ void forward_plus::render(float delta_time)
 		barrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 		barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
 		commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
+		commandBuffer.image_memory_barrier(*screenShadowImageView, barrier);
 
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -471,15 +475,16 @@ void forward_plus::render(float delta_time)
 		barrier.old_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
 		barrier.new_layout      = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(depthView, barrier);
+		commandBuffer.image_memory_barrier(shadowMapView, barrier);
+
+		// linear depth
+		linearDepthPass->set_up(&depthView, linearDepthImageView.get(), camera);
+		linearDepthPass->dispatch(commandBuffer);
 
 		// screen shadow
 		screenShadowPass->set_up(&depthView, &shadowMapView, screenShadowImageView.get());
 		screenShadowPass->set_camera(camera, light_camera);
 		screenShadowPass->dispatch(commandBuffer);
-
-		// linear depth
-		linearDepthPass->set_up(&depthView, linearDepthImageView.get(), camera);
-		linearDepthPass->dispatch(commandBuffer);
 	}
 
 	{
@@ -496,7 +501,6 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
 		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 
@@ -507,12 +511,12 @@ void forward_plus::render(float delta_time)
 		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-
 		commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
 		//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 	}
 
 	{
+		// Before render main scene
 		ImageMemoryBarrier barrier{};
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -521,6 +525,8 @@ void forward_plus::render(float delta_time)
 		barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
 		barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
+		barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		commandBuffer.image_memory_barrier(*screenShadowImageView, barrier);
 
 		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
@@ -543,8 +549,10 @@ void forward_plus::render(float delta_time)
 		auto &render_pass  = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
 		auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
 
-		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, clearValue);
-		showDepthPass->set_up(postProcessVB.get(), const_cast<ImageView *>(&shadowMapRT->get_views()[0]));
+		commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, zeroClearValue);
+		//showDepthPass->set_up(postProcessVB.get(), &shadowMapView);
+		//showDepthPass->set_up(postProcessVB.get(), linearDepthImageView.get());
+		showDepthPass->set_up(postProcessVB.get(), screenShadowImageView.get());
 		showDepthPass->draw(commandBuffer);
 
 		gui->draw(commandBuffer);
@@ -563,7 +571,7 @@ void forward_plus::render(float delta_time)
 		auto &renderPass  = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
 		auto &frameBuffer = device->get_resource_cache().request_framebuffer(*offScreenRT, renderPass);
 
-		commandBuffer.begin_render_pass(*offScreenRT, renderPass, frameBuffer, clearValue);
+		commandBuffer.begin_render_pass(*offScreenRT, renderPass, frameBuffer, zeroClearValue);
 
 		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
 		opaquePass->draw(commandBuffer);
