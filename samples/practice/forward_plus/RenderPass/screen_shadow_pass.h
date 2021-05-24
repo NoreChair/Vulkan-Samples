@@ -22,6 +22,7 @@ class screen_shadow_pass : public compute_pass
 
   private:
 	std::unique_ptr<vkb::core::Sampler> linearClampSampler;
+	std::unique_ptr<vkb::core::Sampler> shadowSampler;
 	vkb::core::ImageView *              uavs[3];
 	vkb::RenderContext *                context{nullptr};
 	vkb::sg::Camera *                   main_camera{nullptr};

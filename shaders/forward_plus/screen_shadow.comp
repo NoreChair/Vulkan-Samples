@@ -12,7 +12,7 @@ layout(set = 0, binding = 0) uniform Uniforms{
 };
 
 layout(set = 0, binding = 1) uniform sampler2D sceneDepth;
-layout(set = 0, binding = 2) uniform sampler2D shadowMap;
+layout(set = 0, binding = 2) uniform highp sampler2DShadow shadowMap;
 layout(set = 0, binding = 3) writeonly uniform highp image2D screenShadow;
 
 
@@ -39,13 +39,30 @@ void main(){
     bvec4 outOfShadow = bvec4(shadowUV.x < 0.0, shadowUV.x > 1.0, shadowUV.y < 0.0, shadowUV.y > 1.0);
 
     if(any(outOfShadow)){
-        imageStore(screenShadow, ivec2(threadIndex), vec4(0.5));
+        imageStore(screenShadow, ivec2(threadIndex), vec4(1.0));
         return;
     }
 
-    float compareDepth = positionSS.z;
-    float shadowDepth = textureLod(shadowMap, shadowUV, 0.0).r;
+    // float compareDepth = positionSS.z;
+    // float shadowDepth = textureLod(shadowMap, shadowUV, 0.0).r;
+    // float shadowFactor = compareDepth < shadowDepth ? 1.0 : 0.1;
 
-    float shadowFactor = compareDepth < shadowDepth ? 1.0 : 0.0;
+    float shadowFactor = textureLod(shadowMap, positionSS.xyz, 0.0);
     imageStore(screenShadow, ivec2(threadIndex), vec4(shadowFactor));
+}
+
+float PercentageCloserFiltering(vec2 uv){
+
+    float pcf = 0.0;
+    const float kernelSize = 1.0f;
+    // regular grid 3 x 3 sampling
+    vec2 Kernel[9] = vec2[9](
+        uv + vec2(-1.0), uv + vec2(0.0, -1.0), uv + vec2(1.0, -1.0),
+        uv + vec2(-1.0, 0.0), uv + vec2(0.0), uv + vec2(1.0, 0.0),
+        uv + vec2(-1.0, 1.0), uv + vec2(0.0, 1.0), uv + vec2(1.0)
+    );
+    // TODO : poisson disk sampling
+
+
+    return pcf;
 }

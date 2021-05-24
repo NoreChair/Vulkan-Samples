@@ -60,7 +60,7 @@ void depth_only_pass::draw(vkb::CommandBuffer &comman_buffer)
 	Device &device = render_context.get_device();
 
 	if (isShadowPass) {
-		comman_buffer.set_depth_bias(0.1f, 0.0f, 0.1f);
+		comman_buffer.set_depth_bias(2.0f, 0.0f, 2.0f);
 	}
 
 	// update and bind buffer

@@ -22,6 +22,10 @@ void screen_shadow_pass::prepare(std::vector<vkb::ShaderModule *> &shader_module
 	samplerInfo.minLod       = 0;
 	samplerInfo.maxLod       = VK_LOD_CLAMP_NONE;
 	linearClampSampler       = std::make_unique<vkb::core::Sampler>(*device, samplerInfo);
+
+	samplerInfo.compareEnable = VK_TRUE;
+	samplerInfo.compareOp     = VK_COMPARE_OP_LESS;
+	shadowSampler             = std::make_unique<vkb::core::Sampler>(*device, samplerInfo);
 }
 
 void screen_shadow_pass::set_up(vkb::core::ImageView *depth, vkb::core::ImageView *shadowMap, vkb::core::ImageView *target)
@@ -66,7 +70,7 @@ void screen_shadow_pass::dispatch(vkb::CommandBuffer &command_buffer)
 
 	command_buffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
 	command_buffer.bind_image(*uavs[0], *linearClampSampler, 0, 1, 0);
-	command_buffer.bind_image(*uavs[1], *linearClampSampler, 0, 2, 0);
+	command_buffer.bind_image(*uavs[1], *shadowSampler, 0, 2, 0);
 	command_buffer.bind_image(*uavs[2], 0, 3, 0);
 
 	command_buffer.dispatch((uint32_t) glm::ceil(imageSize.width / 16.0f), (uint32_t) glm::ceil(imageSize.height / 16.0f), 1);
