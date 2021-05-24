@@ -15,6 +15,8 @@ class opaque_pass : public vkb::Subpass
 	void set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *submeshs);
 	void draw(vkb::CommandBuffer &comman_buffer);
 
+	vkb::core::ImageView *screenShadow{nullptr};
+
   private:
 	void bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
@@ -23,9 +25,11 @@ class opaque_pass : public vkb::Subpass
 
 	VkExtent2D         render_extent;
 	vkb::PipelineState pipeline_state;
-	vkb::sg::Camera   *render_camera{nullptr};
+	vkb::sg::Camera *  render_camera{nullptr};
 	vkb::core::Buffer *light_grid_buffer{nullptr};
 	vkb::core::Buffer *light_data_buffer{nullptr};
+
+	std::shared_ptr<vkb::core::Sampler> linear_clamp_sampler{nullptr};
 
 	std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *draw_meshes;
 

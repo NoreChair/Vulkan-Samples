@@ -573,8 +573,10 @@ void forward_plus::render(float delta_time)
 
 		commandBuffer.begin_render_pass(*offScreenRT, renderPass, frameBuffer, zeroClearValue);
 
+		opaquePass->screenShadow = screenShadowImageView.get();
 		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
 		opaquePass->draw(commandBuffer);
+		
 
 		debugDrawPass->draw_sphere = drawLight;
 		debugDrawPass->draw_box    = drawAABB;

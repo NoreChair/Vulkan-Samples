@@ -22,7 +22,7 @@ opaque_pass::~opaque_pass()
 void opaque_pass::prepare()
 {
 	DepthStencilState defaultDepthState;
-	defaultDepthState.depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
+	defaultDepthState.depth_compare_op   = VK_COMPARE_OP_GREATER_OR_EQUAL;
 	defaultDepthState.depth_write_enable = false;
 	pipeline_state.set_depth_stencil_state(defaultDepthState);
 	RasterizationState rasterState;
@@ -32,6 +32,17 @@ void opaque_pass::prepare()
 	ColorBlendAttachmentState defaultAttaState;
 	defaultColorState.attachments.push_back(defaultAttaState);
 	pipeline_state.set_color_blend_state(defaultColorState);
+
+	auto samplerCreateInfo         = initializers::sampler_create_info();
+	samplerCreateInfo.magFilter    = VK_FILTER_LINEAR;
+	samplerCreateInfo.minFilter    = VK_FILTER_LINEAR;
+	samplerCreateInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerCreateInfo.minLod       = 0;
+	samplerCreateInfo.maxLod       = VK_LOD_CLAMP_NONE;
+	linear_clamp_sampler           = std::make_shared<core::Sampler>(render_context.get_device(), samplerCreateInfo);
 }
 
 void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *submeshs)
@@ -100,11 +111,12 @@ void opaque_pass::bind_descriptor(vkb::CommandBuffer &command_buffer, vkb::Pipel
 {
 	struct
 	{
-		glm::vec4 direction_light;
-		glm::vec4 direction_light_color;
-		float     inv_tile_dim;
-		uint32_t  tile_count_x;
-	} lightInfos{sunDirection, sunColor, 1.0f / 16.0f, (uint32_t) glm::ceil(render_extent.width / 16.0f)};
+		glm::vec4  direction_light;
+		glm::vec4  direction_light_color;
+		VkExtent2D viewPort;
+		float      inv_tile_dim;
+		uint32_t   tile_count_x;
+	} lightInfos{sunDirection, sunColor, render_extent, 1.0f / 16.0f, (uint32_t) glm::ceil(render_extent.width / 16.0f)};
 
 	auto allocation = get_render_context().get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(lightInfos), 0);
 	allocation.update(lightInfos);
@@ -124,6 +136,8 @@ void opaque_pass::bind_descriptor(vkb::CommandBuffer &command_buffer, vkb::Pipel
 			                          1, layoutBinding->binding, 0);
 		}
 	}
+
+	command_buffer.bind_image(*screenShadow, *linear_clamp_sampler, 1, 3, 0);
 
 	struct MaterialUniform
 	{

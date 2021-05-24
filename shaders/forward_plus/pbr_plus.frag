@@ -22,6 +22,7 @@ layout(set = 0, binding = 1) uniform LightInfo
 {
 	vec4  direction_light;
     vec4  direction_light_color;
+	uvec2 viewPort;
 	float inv_tile_dim;
     uint  tile_count_x;
 };
@@ -65,6 +66,8 @@ layout(set = 1, binding = 1) uniform sampler2D normal_texture;
 #ifdef HAS_METALLIC_ROUGHNESS_TEXTURE
 layout(set = 1, binding = 2) uniform sampler2D metallic_roughness_texture;
 #endif
+
+layout(set = 1, binding = 3) uniform sampler2D main_light_shadow_texture;
 
 struct LightBufferData
 {
@@ -223,6 +226,10 @@ void main(void)
 	float metallic  = metallic_factor;
 #endif
 
+	// screen space shadow
+	vec2 screenUV = gl_FragCoord.xy / vec2(viewPort);
+	float shadowAttr = texture(main_light_shadow_texture, screenUV).r;
+
 	vec3  N     = normal();
 	vec3  V     = normalize(camera_position - v_pos);
 	float NdotV = saturate(dot(N, V));
@@ -244,7 +251,7 @@ void main(void)
 		float D   = D_GGX(NdotH, roughness);
 		vec3  Fr  = F * D * Vis;
         float Fd  = Fr_DisneyDiffuse(NdotV, NdotL, LdotH, roughness);
-        light_contribution += NdotL * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
+        light_contribution += NdotL * shadowAttr * direction_light_color.xyz * direction_light_color.w * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
     }
 
     uvec2 tile_pos   = GetTilePos(gl_FragCoord.xy, vec2(inv_tile_dim));
@@ -326,6 +333,6 @@ void main(void)
 	vec3 irradiance    = vec3(0.2);
 	vec3 F             = F_Schlick_Roughness(F0, max(dot(N, V), 0.0), roughness * roughness * roughness * roughness);
 	vec3 ibl_diffuse   = irradiance * base_color.rgb;
-	vec3 ambient_color = ibl_diffuse;
+	vec3 ambient_color = ibl_diffuse * shadowAttr;
 	o_color = vec4(ambient_color * 0.3 + light_contribution, base_color.a);
 }
