@@ -371,7 +371,8 @@ void forward_plus::prepare_scene()
 
 	// hack sun direction
 	sg::LightProperties sunLight;
-	sunLight.direction = glm::normalize(glm::vec3(-1.0, -1.0, 0.0));
+	sunLight.direction       = glm::normalize(glm::vec3(0.2, -1.0, 0.2));
+	opaquePass->sunDirection = glm::vec4(sunLight.direction, 0.0);
 
 	auto light_node          = (*direct_light)->get_node();
 	auto direct_light_camera = std::make_unique<shadow_camera>("light_camera");
@@ -576,7 +577,6 @@ void forward_plus::render(float delta_time)
 		opaquePass->screenShadow = screenShadowImageView.get();
 		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
 		opaquePass->draw(commandBuffer);
-		
 
 		debugDrawPass->draw_sphere = drawLight;
 		debugDrawPass->draw_box    = drawAABB;

@@ -17,6 +17,9 @@ class opaque_pass : public vkb::Subpass
 
 	vkb::core::ImageView *screenShadow{nullptr};
 
+	glm::vec4 sunDirection = glm::vec4(0.0, -1.0, 0.0, 0.0);
+	glm::vec4 sunColor     = glm::vec4(1.0, 1.0, 1.0, 1.0);
+
   private:
 	void bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline);
 	void update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node);
@@ -32,7 +35,4 @@ class opaque_pass : public vkb::Subpass
 	std::shared_ptr<vkb::core::Sampler> linear_clamp_sampler{nullptr};
 
 	std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *draw_meshes;
-
-	glm::vec4 sunDirection = glm::normalize(glm::vec4(-1.0, -1.0, 0.0, 0.0));
-	glm::vec4 sunColor     = glm::vec4(1.0, 1.0, 1.0, 1.0);
 };
