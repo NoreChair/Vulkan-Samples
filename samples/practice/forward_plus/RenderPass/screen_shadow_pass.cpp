@@ -45,15 +45,16 @@ void screen_shadow_pass::dispatch(vkb::CommandBuffer &command_buffer)
 {
 	struct
 	{
-		glm::uvec2 extent;
-		glm::vec2  rcpExtent;
-		glm::mat4  invMainMatrix;
-		glm::mat4  shadowMatrix;
+		glm::vec4 extent;
+		glm::vec4 shadowExtent;
+		glm::mat4 invMainMatrix;
+		glm::mat4 shadowMatrix;
 	} uniforms;
 
-	VkExtent3D imageSize = uavs[2]->get_image().get_extent();
-	uniforms.extent      = glm::uvec2(imageSize.width, imageSize.height);
-	uniforms.rcpExtent   = 1.0f / glm::vec2(uniforms.extent);
+	VkExtent3D imageSize       = uavs[2]->get_image().get_extent();
+	VkExtent3D shadowImageSize = uavs[1]->get_image().get_extent();
+	uniforms.extent            = glm::vec4(imageSize.width, imageSize.height, 1.0f / imageSize.width, 1.0f / imageSize.height);
+	uniforms.shadowExtent      = glm::vec4(shadowImageSize.width, shadowImageSize.height, 1.0f / shadowImageSize.width, 1.0f / shadowImageSize.height);
 
 	auto mainProj = main_camera->get_projection();
 	mainProj[1][1] *= -1.0;
