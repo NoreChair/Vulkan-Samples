@@ -1,5 +1,6 @@
 #version 320 es
 precision highp float;
+#extension  GL_NV_compute_shader_derivatives : enable
 
 layout(set = 0, binding = 0) uniform Uniforms{
     vec4 renderExtent;
@@ -26,13 +27,24 @@ float RegularGridSample(vec3 shadowPos, vec2 rcpShadowExtent){
     );
 
     float shadowValue = 0.0;
+    float shadowCompareZ = shadowPos.z;
+
     for(uint i = 0u; i < 9u; ++i){
         // for large kernel, is better to use
         // (delta u, delta v) = (delta x) * (ddx u, ddx v) + (delta y) * (ddy u, ddy v);
         // (delta z) = (delta x) * (ddx z) + (delta y) * (ddy z);
         // dest ref z = origin ref z + delta z;
-        // to determine shadow pcf 
-        shadowValue += textureLod(shadowMap, vec3(kernel[i] + shadowPos.xy, shadowPos.z), 0.0);
+        // to determine shadow pcfs
+        vec2 shadowUV = shadowPos.xy + kernel[i];
+    #ifdef GL_NV_compute_shader_derivatives
+        vec2 dx = dFdx(shadowPos.xy);
+        vec2 dy = dFdy(shadowPos.xy);
+        mat2 correctMatrix = mat2(dy.y, -dx.y, -dy.x, dx.x) * (1.0 / (dx.x * dy.y - dx.y * dy.x));
+        vec2 correctOffset = correctMatrix * kernel[i];
+        vec2 dZ = vec2(dFdx(shadowCompareZ), dFdy(shadowCompareZ));
+        shadowCompareZ = shadowCompareZ + dot(correctOffset, dZ);
+    #endif
+        shadowValue += textureLod(shadowMap, vec3(shadowUV, shadowCompareZ), 0.0);
     }
 
     return shadowValue * 0.1111111111;
@@ -62,6 +74,7 @@ void main(){
     positionSS.xy = positionSS.xy * vec2(0.5) + vec2(0.5);
 
     bvec4 outOfShadow = bvec4(positionSS.x < 0.0, positionSS.x > 1.0, positionSS.y < 0.0, positionSS.y > 1.0);
+
     float shadowFactor = PercentageCloserFiltering(positionSS.xyz);
     // float shadowFactor = textureLod(shadowMap, positionSS.xyz, 0.0);
     if(any(outOfShadow)){
