@@ -1,0 +1,36 @@
+#version 320 es
+precision highp float;
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    vec4 extent;
+};
+
+layout(set = 0, std430, binding = 1) writeonly buffer Histogram{
+    uint histogram[];
+};
+
+layout(set = 0, binding = 2) highp uniform usampler2D lumaResult;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+shared uint tileHistogram[256];
+
+void main(){
+    uint threadIndex = gl_LocalInvocationIndex;
+    ivec2 textureExtent = ivec2(extent.xy);
+    ivec2 dispatchID = min(ivec2(gl_GlobalInvocationID.xy), textureExtent);
+    tileHistogram[threadIndex] = 0u;
+
+    memoryBarrierShared();
+    barrier();
+
+    for(int i = 0; i < textureExtent.y; i += 16){
+        uint luma = texelFetch(lumaResult, dispatchID + ivec2(0, i), 0).r;
+        luma = clamp(luma, 0u, 255u);
+        atomicAdd(tileHistogram[luma], 1u);
+    }
+
+    memoryBarrierShared();
+    barrier();
+    atomicAdd(histogram[threadIndex], tileHistogram[threadIndex]);
+}
