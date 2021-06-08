@@ -1,0 +1,71 @@
+#version 320 es
+precision highp float;
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    float targetLuma;
+    float adaptationRate;
+    float minExposure;
+    float maxExposure;
+    uint pixelCount;
+};
+
+layout(set = 0, std430, binding = 1) readonly buffer Histogram{
+    uint histogram[];
+};
+
+layout(set = 0, std430, binding = 2) buffer ExposureBuffer{
+    // from 0 to the end
+    // exposure, 1.0/exposure, exposure, averageLuma, MinLog, MaxLog, range, rcpRange
+    float exposureBuffer[];
+};
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+shared float accumulation[256];
+
+void main(){
+    uint threadIndex = gl_LocalInvocationIndex;
+    float accumWeight = float(threadIndex) * float(histogram[threadIndex]);
+
+    for(uint i = 1u; i < 256u; i *= 2u){
+        accumulation[threadIndex] = accumWeight;
+
+        memoryBarrierShared();
+        barrier();
+
+        accumWeight += accumulation[(threadIndex + i) % 256u];
+    }
+
+    float minLog = exposureBuffer[4];
+    float maxLog = exposureBuffer[5];
+    float logRange = exposureBuffer[6];
+    float rcpLogRange = exposureBuffer[7];
+
+    float averageLogLuma = accumWeight / float(max((pixelCount - histogram[0]), 1u)) - 1.0;
+    float averageLuma = exp2(averageLogLuma / 254.0 * logRange + minLog);
+    float targetExposure = targetLuma / averageLogLuma;
+
+    float exposure = exposureBuffer[0];
+    exposure = mix(exposure, targetExposure, adaptationRate);
+    exposure = clamp(exposure, minLog, maxLog);
+
+    if(threadIndex == 0u){
+        exposureBuffer[0] = exposure;
+        exposureBuffer[1] = 1.0 / exposure;
+        exposureBuffer[2] = exposure;
+        exposureBuffer[3] = averageLogLuma;
+
+        float biasToCenter = (floor(averageLogLuma) - 128.0) / 255.0;
+        if (abs(biasToCenter) > 0.1)
+        {
+            minLog += biasToCenter * rcpLogRange;
+            maxLog += biasToCenter * rcpLogRange;
+        }
+
+        exposureBuffer[4] = minLog;
+        exposureBuffer[5] = maxLog;
+        exposureBuffer[6] = logRange;
+        exposureBuffer[7] = 1.0 / logRange;
+    }
+}
+

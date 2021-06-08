@@ -9,7 +9,7 @@ layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer{
     // exposure, 1.0/exposure, exposure, 0.0, initMinLog, initMaxLog, range, rcpRange
     float exposureBuffer[];
 };
-layout(set = 0, binding = 2) writeonly uniform highp image2D lumaResult;
+layout(set = 0, binding = 2) writeonly uniform highp uimage2D lumaResult;
 layout(set = 0, binding = 3) uniform sampler2D sceneColor;
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
@@ -21,7 +21,7 @@ float RGBToLuminance(vec3 rgb){
 void main(){
     uvec2 dispatchID = min(gl_GlobalInvocationID.xy, uvec2(extent.xy));
     vec2 uv = vec2(dispatchID) * extent.zw;
-    vec2 offset = extent.zw * 0.5;
+    vec2 offset = extent.zw * 1.0;
     vec3 sampleColor0 = texture(sceneColor, uv + vec2(-offset.x, -offset.y)).rgb;
     vec3 sampleColor1 = texture(sceneColor, uv + vec2(-offset.x, offset.y)).rgb;
     vec3 sampleColor2 = texture(sceneColor, uv + vec2(offset.x, -offset.y)).rgb;
@@ -29,11 +29,11 @@ void main(){
     float luma = RGBToLuminance(sampleColor0 + sampleColor1 + sampleColor2 + sampleColor3) * 0.25;
 
     if(luma == 0.0){
-        imageStore(lumaResult, ivec2(dispatchID), vec4(luma));
+        imageStore(lumaResult, ivec2(dispatchID), uvec4(luma));
     }else{
-        float minBrightness = exposureBuffer[4];
-        float rcpBrightnessRange = exposureBuffer[7];
-        float logLuma = clamp((log2(luma) - minBrightness) * rcpBrightnessRange, 0.0, 1.0);
-        imageStore(lumaResult, ivec2(dispatchID), vec4(logLuma * 254.0 + 1.0));
+        float minLog = exposureBuffer[4];
+        float rcpLogRange = exposureBuffer[7];
+        float logLuma = clamp((log2(luma) - minLog) * rcpLogRange, 0.0, 1.0);
+        imageStore(lumaResult, ivec2(dispatchID), uvec4(logLuma * 254.0 + 1.0));
     }
 }
