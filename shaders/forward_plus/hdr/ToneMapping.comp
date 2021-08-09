@@ -1,0 +1,67 @@
+#version 450 core
+precision highp float;
+
+layout(set = 0, binding = 0) uniform Uniforms{
+	vec4 extent;
+};
+
+layout(set = 0, std430, binding = 1) buffer ExposureBuffer{
+    // from 0 to the end
+    // exposure, 1.0/exposure, exposure, averageLuma, MinLog, MaxLog, range, rcpRange
+    float exposureBuffer[];
+};
+
+layout(set = 1, r11f_g11f_b10f, binding = 0) uniform highp image2D colorRW;
+layout(set = 1, binding = 1) writeonly uniform highp image2D lumaBuffer;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// The Reinhard tone operator.  Typically, the value of k is 1.0, but you can adjust exposure by 1/k.
+// I.e. TM_Reinhard(x, 0.5) == TM_Reinhard(x * 2.0, 1.0)
+
+vec3 TM_Reinhard(vec3 hdr, float k /*= 1.0*/)
+{
+    return hdr / (hdr + k);
+}
+
+// The inverse of Reinhard
+vec3 ITM_Reinhard(vec3 sdr, float k /*= 1.0*/)
+{
+    return k * sdr / (k - sdr);
+}
+
+vec3 ToneMapACES(vec3 hdr)
+{
+    const float A = 2.51, B = 0.03, C = 2.43, D = 0.59, E = 0.14;
+    return clamp((hdr * (A * hdr + B)) / (hdr * (C * hdr + D) + E), vec3(0.0), vec3(1.0));
+}
+
+vec3 InverseToneMapACES(vec3 sdr)
+{
+    const float A = 2.51, B = 0.03, C = 2.43, D = 0.59, E = 0.14;
+    return 0.5 * (D * sdr - sqrt(((D*D - 4*C*E) * sdr + 4*A*E-2*B*D) * sdr + B*B) - B) / (A - C * sdr);
+}
+
+// This is the new tone operator.  It resembles ACES in many ways, but it is simpler to evaluate with ALU.  One
+// advantage it has over Reinhard-Squared is that the shoulder goes to white more quickly and gives more overall
+// brightness and contrast to the image.
+vec3 ToneMapping_Standard(vec3 hdr){
+    return TM_Reinhard(hdr * sqrt(hdr), sqrt(4.0 / 27.0));
+}
+
+float RGBToLuminance(vec3 rgb){
+    return dot(rgb, vec3(0.212671, 0.715160, 0.072169));
+}
+
+void main(){
+    uvec2 dispatchID = min(gl_GlobalInvocationID.xy, uvec2(extent.xy));
+    vec3 hdrColor = imageLoad(colorRW, ivec2(dispatchID)).rgb;
+    // TODO : bloom
+    hdrColor *= exposureBuffer[0];
+    // hdr scene refers to display refers
+    // hdr to sdr
+    // TODO : hdr display output
+    vec3 sdrColor = ToneMapping_Standard(hdrColor);
+    imageStore(colorRW, ivec2(dispatchID), vec4(sdrColor, 1.0));
+    imageStore(lumaBuffer, ivec2(dispatchID), vec4(RGBToLuminance(sdrColor)));
+}

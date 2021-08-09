@@ -42,8 +42,10 @@ void main(){
     float rcpLogRange = exposureBuffer[7];
 
     float averageLogLuma = accumWeight / float(max((pixelCount - histogram[0]), 1u)) - 1.0;
+    // Photographic Tone Reproduction for Digital Images
+    // equation 1
     float averageLuma = exp2(averageLogLuma / 254.0 * logRange + minLog);
-    float targetExposure = targetLuma / averageLogLuma;
+    float targetExposure = targetLuma / averageLuma;
 
     float exposure = exposureBuffer[0];
     exposure = mix(exposure, targetExposure, adaptationRate);

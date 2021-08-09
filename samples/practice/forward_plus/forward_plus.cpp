@@ -283,7 +283,11 @@ void forward_plus::prepare_shaders()
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
 		    {"light_grid", "forward_plus/light_grid.comp"},
-		    {"screen_shadow", "forward_plus/screen_shadow.comp"}};
+		    {"screen_shadow", "forward_plus/screen_shadow.comp"},
+			{"adjust_exposure", "forward_plus/AdjustExposure.comp"}, 
+			{"extract_luma", "forward_plus/ExtractLuma.comp"}, 
+			{"gen_histogram", "forward_plus/GenerateHistogram.comp"}, 
+			{"tone_mapping", "forward_plus/ToneMapping.comp"}};
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
