@@ -1,0 +1,100 @@
+#version 450 core
+precision highp float;
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    mat4 invCurViewProj;
+    mat4 prevViewProj;
+    vec4 extent;
+    float near;
+    float far;
+};
+
+layout(set = 0, r32f, binding = 0) readonly uniform highp image2D linearDepth;
+layout(set = 0, r32ui, binding = 1) uniform highp uimage2D velocityBuffer;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+uint f32tof16(float val)
+{
+    uint f32 = floatBitsToUint(val);
+    uint f16 = 0u;
+    uint sign = (f32 >> 16) & 0x8000u;
+    int exponent = int((f32 >> 23) & 0xFFu) - 127;
+    uint mantissa = f32 & 0x007FFFFFu;
+    if (exponent == 128)
+    {
+        // Infinity or NaN
+        // NaN bits that are masked out by 0x3FF get discarded.
+        // This can turn some NaNs to infinity, but this is allowed by the spec.
+        f16 = sign | (0x1Fu << 10);
+        f16 |= (mantissa & 0x3FFu);
+    }
+    else if (exponent > 15)
+    {
+        // Overflow - flush to Infinity
+        f16 = sign | (0x1Fu << 10);
+    }
+    else if (exponent > -15)
+    {
+        // Representable value
+        exponent += 15;
+        mantissa >>= 13;
+        f16 = sign | uint(exponent << 10) | mantissa;
+    }
+    else
+    {
+        f16 = sign;
+    }
+    return f16;
+}
+
+uint PackXY(float x){
+    uint signbit = floatBitsToUint(x) >> 31;
+    x = clamp(abs(x / 32768.0), 0.0, uintBitsToFloat(0x3BFFE000));
+    return (f32tof16(x) + 8) >> 4 | signbit << 9;
+}
+
+uint PackZ( float x )
+{
+    uint signbit = floatBitsToUint(x) >> 31;
+    x = clamp(abs(x / 128.0), 0, uintBitsToFloat(0x3BFFE000));
+    return (f32tof16(x) + 2) >> 2 | signbit << 11;
+}
+
+// Pack the velocity to write to R10G10B10A2_UNORM
+uint PackVelocity( vec3 velocity )
+{
+    return PackXY(velocity.x) | PackXY(velocity.y) << 10 | PackZ(velocity.z) << 20;
+}
+
+void main(){
+    if(gl_GlobalInvocationID.x >= uint(extent.x) || gl_GlobalInvocationID.y >= uint(extent.y)){
+        return;
+    }
+
+    ivec2 dispatchID = ivec2(gl_GlobalInvocationID.xy);
+    vec2 curPixelPos = vec2(dispatchID) + vec2(0.5);
+    float depth = imageLoad(linearDepth, dispatchID).r;
+
+    mat4 screenToHClip = mat4(
+        extent.z * 2.0, 0.0, 0.0, 0.0,
+        0.0, -extent.w * 2.0, 0.0, 0.0,
+        0.0, 0.0, near/(far - near), 0.0,
+        -1.0, 1.0, -near/(far - near), 1.0
+    );
+
+    mat4 hClipToScreen = mat4(
+        extent.x * 0.5, 0.0, 0.0, 0.0,
+        0.0, -extent.y * 0.5, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        extent.x * 0.5, extent.y * 0.5, 0.0, 1.0
+    );
+
+    mat4 curToPrev = hClipToScreen * prevViewProj * invCurViewProj * screenToHClip;
+    vec4 hpos = vec4(curPixelPos.xy * depth, 1.0, depth);
+    vec4 prevHpos = curToPrev * hpos;
+    prevHpos.xyz /= prevHpos.w;
+    prevHpos.z = prevHpos.z; // linear dpeth instead of scene depth
+
+    imageStore(velocityBuffer, dispatchID, uvec4(PackVelocity(prevHpos.xyz - vec3(curPixelPos, depth))));
+}
