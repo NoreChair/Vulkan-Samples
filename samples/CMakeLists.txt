@@ -87,7 +87,8 @@ set(ORDER_LIST
     "16bit_arithmetic"
 
    #Pratice Samples
-    "forward_plus")
+    "forward_plus"
+	"character_render")
 
 
 # Orders the sample ids by the order list above
