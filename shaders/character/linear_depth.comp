@@ -1,0 +1,25 @@
+#version 320 es
+precision highp float;
+
+layout(set = 0, binding = 2) uniform CameraUniforms{
+    float near;
+    float far;
+    uint width;
+    uint height;
+};
+layout(set = 0, r32f, binding = 0) readonly uniform highp image2D sceneDepth;
+layout(set = 0, r32f, binding = 1) writeonly uniform highp image2D linearDepth;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+void main(){
+    if(gl_GlobalInvocationID.x >= width || gl_GlobalInvocationID.y >= height){
+        return;
+    }
+
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    vec4 depth = imageLoad(sceneDepth, id).rrrr;
+
+    // reverse z
+    // imageStore(linearDepth, id, near / (near + (near - far) * depth));
+    imageStore(linearDepth, id, 1.0 / (((far - near) / near) * depth + vec4(1.0)));
+}
