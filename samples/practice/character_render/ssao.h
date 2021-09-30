@@ -1,6 +1,6 @@
 #pragma once
 
-namespace SubsurfacePass {
+namespace SSAO {
     void Init();
     void Draw();
 }
