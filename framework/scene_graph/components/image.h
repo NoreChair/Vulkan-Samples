@@ -56,9 +56,9 @@ struct Mipmap
 class Image : public Component
 {
   public:
-	Image(const std::string &name, std::vector<uint8_t> &&data = {}, std::vector<Mipmap> &&mipmaps = {{}});
+	Image(const std::string &name, std::vector<uint8_t> &&data = {}, std::vector<Mipmap> &&mipmaps = {{}}, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM);
 
-	static std::unique_ptr<Image> load(const std::string &name, const std::string &uri);
+	static std::unique_ptr<Image> load(const std::string &name, const std::string &uri, bool srgb = false);
 
 	virtual ~Image() = default;
 

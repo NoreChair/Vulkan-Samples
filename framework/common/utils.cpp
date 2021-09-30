@@ -288,7 +288,7 @@ sg::Light &add_spot_light(sg::Scene &scene, const glm::vec3 &position, const glm
 	return add_light(scene, sg::LightType::Spot, position, rotation, props, parent_node);
 }
 
-sg::Node &add_free_camera(sg::Scene &scene, const std::string &node_name, VkExtent2D extent)
+sg::Node &add_free_camera(sg::Scene &scene, const std::string &node_name, VkExtent2D extent, float speed)
 {
 	auto camera_node = scene.find_node(node_name);
 
@@ -312,6 +312,8 @@ sg::Node &add_free_camera(sg::Scene &scene, const std::string &node_name, VkExte
 	auto free_camera_script = std::make_unique<sg::FreeCamera>(*camera_node);
 
 	free_camera_script->resize(extent.width, extent.height);
+
+    free_camera_script->set_speed(speed);
 
 	scene.add_component(std::move(free_camera_script), *camera_node);
 

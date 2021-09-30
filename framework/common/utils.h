@@ -102,7 +102,7 @@ sg::Light &add_spot_light(sg::Scene &scene, const glm::vec3 &position, const glm
  * @param extent The initial resolution of the camera
  * @return Node where the script was attached as component
  */
-sg::Node &add_free_camera(sg::Scene &scene, const std::string &node_name, VkExtent2D extent);
+sg::Node &add_free_camera(sg::Scene &scene, const std::string &node_name, VkExtent2D extent, float speed = 3.0);
 
 namespace graphs
 {

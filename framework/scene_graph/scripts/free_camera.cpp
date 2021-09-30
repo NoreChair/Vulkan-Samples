@@ -239,5 +239,13 @@ void FreeCamera::resize(uint32_t width, uint32_t height)
 	}
 }
 
+void FreeCamera::set_speed(float speed) {
+    speed_multiplier = speed;
+}
+
+float FreeCamera::get_speed() {
+    return speed_multiplier;
+}
+
 }        // namespace sg
 }        // namespace vkb

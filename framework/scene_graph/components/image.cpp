@@ -68,10 +68,10 @@ bool is_astc(const VkFormat format)
 	        format == VK_FORMAT_ASTC_12x12_SRGB_BLOCK);
 }
 
-Image::Image(const std::string &name, std::vector<uint8_t> &&d, std::vector<Mipmap> &&m) :
+Image::Image(const std::string &name, std::vector<uint8_t> &&d, std::vector<Mipmap> &&m, VkFormat format) :
     Component{name},
     data{std::move(d)},
-    format{VK_FORMAT_R8G8B8A8_UNORM},
+    format{format},
     mipmaps{std::move(m)}
 {
 }
@@ -244,7 +244,7 @@ void Image::set_offsets(const std::vector<std::vector<VkDeviceSize>> &o)
 	offsets = o;
 }
 
-std::unique_ptr<Image> Image::load(const std::string &name, const std::string &uri)
+std::unique_ptr<Image> Image::load(const std::string &name, const std::string &uri, bool srgb)
 {
 	std::unique_ptr<Image> image{nullptr};
 
@@ -255,7 +255,7 @@ std::unique_ptr<Image> Image::load(const std::string &name, const std::string &u
 
 	if (extension == "png" || extension == "jpg")
 	{
-		image = std::make_unique<Stb>(name, data);
+		image = std::make_unique<Stb>(name, data, srgb? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM);
 	}
 	else if (extension == "astc")
 	{

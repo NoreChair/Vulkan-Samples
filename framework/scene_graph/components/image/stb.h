@@ -26,7 +26,7 @@ namespace sg
 class Stb : public Image
 {
   public:
-	Stb(const std::string &name, const std::vector<uint8_t> &data);
+	Stb(const std::string &name, const std::vector<uint8_t> &data, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM);
 
 	virtual ~Stb() = default;
 };

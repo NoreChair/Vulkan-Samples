@@ -60,6 +60,10 @@ class FreeCamera : public Script
 
 	virtual void resize(uint32_t width, uint32_t height) override;
 
+    void set_speed(float speed);
+
+    float get_speed();
+
   private:
 	float speed_multiplier{3.0f};
 
