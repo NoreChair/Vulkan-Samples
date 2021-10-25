@@ -170,44 +170,79 @@ void CommandBuffer::begin_render_pass(const RenderTarget &render_target, const s
 	auto &render_pass = get_render_pass(render_target, load_store_infos, subpasses);
 	auto &framebuffer = get_device().get_resource_cache().request_framebuffer(render_target, render_pass);
 
-	begin_render_pass(render_target, render_pass, framebuffer, clear_values, contents);
+	begin_render_pass(render_target.get_extent(), render_pass, framebuffer, clear_values, contents);
 }
 
 void CommandBuffer::begin_render_pass(const RenderTarget &render_target, const RenderPass &render_pass, const Framebuffer &framebuffer, const std::vector<VkClearValue> &clear_values, VkSubpassContents contents)
 {
-	current_render_pass.render_pass = &render_pass;
-	current_render_pass.framebuffer = &framebuffer;
+	//current_render_pass.render_pass = &render_pass;
+	//current_render_pass.framebuffer = &framebuffer;
 
-	// Begin render pass
-	VkRenderPassBeginInfo begin_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-	begin_info.renderPass        = current_render_pass.render_pass->get_handle();
-	begin_info.framebuffer       = current_render_pass.framebuffer->get_handle();
-	begin_info.renderArea.extent = render_target.get_extent();
-	begin_info.clearValueCount   = to_u32(clear_values.size());
-	begin_info.pClearValues      = clear_values.data();
+	//// Begin render pass
+	//VkRenderPassBeginInfo begin_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+	//begin_info.renderPass        = current_render_pass.render_pass->get_handle();
+	//begin_info.framebuffer       = current_render_pass.framebuffer->get_handle();
+	//begin_info.renderArea.extent = render_target.get_extent();
+	//begin_info.clearValueCount   = to_u32(clear_values.size());
+	//begin_info.pClearValues      = clear_values.data();
 
-	const auto &framebuffer_extent = current_render_pass.framebuffer->get_extent();
+	//const auto &framebuffer_extent = current_render_pass.framebuffer->get_extent();
 
-	// Test the requested render area to confirm that it is optimal and could not cause a performance reduction
-	if (!is_render_size_optimal(framebuffer_extent, begin_info.renderArea))
-	{
-		// Only prints the warning if the framebuffer or render area are different since the last time the render size was not optimal
-		if (framebuffer_extent.width != last_framebuffer_extent.width || framebuffer_extent.height != last_framebuffer_extent.height ||
-		    begin_info.renderArea.extent.width != last_render_area_extent.width || begin_info.renderArea.extent.height != last_render_area_extent.height)
-		{
-			LOGW("Render target extent is not an optimal size, this may result in reduced performance.");
-		}
+	//// Test the requested render area to confirm that it is optimal and could not cause a performance reduction
+	//if (!is_render_size_optimal(framebuffer_extent, begin_info.renderArea))
+	//{
+	//	// Only prints the warning if the framebuffer or render area are different since the last time the render size was not optimal
+	//	if (framebuffer_extent.width != last_framebuffer_extent.width || framebuffer_extent.height != last_framebuffer_extent.height ||
+	//	    begin_info.renderArea.extent.width != last_render_area_extent.width || begin_info.renderArea.extent.height != last_render_area_extent.height)
+	//	{
+	//		LOGW("Render target extent is not an optimal size, this may result in reduced performance.");
+	//	}
 
-		last_framebuffer_extent = current_render_pass.framebuffer->get_extent();
-		last_render_area_extent = begin_info.renderArea.extent;
-	}
+	//	last_framebuffer_extent = current_render_pass.framebuffer->get_extent();
+	//	last_render_area_extent = begin_info.renderArea.extent;
+	//}
 
-	vkCmdBeginRenderPass(get_handle(), &begin_info, contents);
+	//vkCmdBeginRenderPass(get_handle(), &begin_info, contents);
 
-	// Update blend state attachments for first subpass
-	auto blend_state = pipeline_state.get_color_blend_state();
-	blend_state.attachments.resize(current_render_pass.render_pass->get_color_output_count(pipeline_state.get_subpass_index()));
-	pipeline_state.set_color_blend_state(blend_state);
+	//// Update blend state attachments for first subpass
+	//auto blend_state = pipeline_state.get_color_blend_state();
+	//blend_state.attachments.resize(current_render_pass.render_pass->get_color_output_count(pipeline_state.get_subpass_index()));
+	//pipeline_state.set_color_blend_state(blend_state);
+    begin_render_pass(render_target.get_extent(), render_pass, framebuffer, clear_values, contents);
+}
+
+void CommandBuffer::begin_render_pass(const VkExtent2D & extent, const RenderPass & render_pass, const Framebuffer & framebuffer, const std::vector<VkClearValue>& clear_values, VkSubpassContents contents) {
+    current_render_pass.render_pass = &render_pass;
+    current_render_pass.framebuffer = &framebuffer;
+
+    // Begin render pass
+    VkRenderPassBeginInfo begin_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    begin_info.renderPass = current_render_pass.render_pass->get_handle();
+    begin_info.framebuffer = current_render_pass.framebuffer->get_handle();
+    begin_info.renderArea.extent = extent;
+    begin_info.clearValueCount = to_u32(clear_values.size());
+    begin_info.pClearValues = clear_values.data();
+
+    const auto &framebuffer_extent = current_render_pass.framebuffer->get_extent();
+
+    // Test the requested render area to confirm that it is optimal and could not cause a performance reduction
+    if (!is_render_size_optimal(framebuffer_extent, begin_info.renderArea)) {
+        // Only prints the warning if the framebuffer or render area are different since the last time the render size was not optimal
+        if (framebuffer_extent.width != last_framebuffer_extent.width || framebuffer_extent.height != last_framebuffer_extent.height ||
+            begin_info.renderArea.extent.width != last_render_area_extent.width || begin_info.renderArea.extent.height != last_render_area_extent.height) {
+            LOGW("Render target extent is not an optimal size, this may result in reduced performance.");
+        }
+
+        last_framebuffer_extent = current_render_pass.framebuffer->get_extent();
+        last_render_area_extent = begin_info.renderArea.extent;
+    }
+
+    vkCmdBeginRenderPass(get_handle(), &begin_info, contents);
+
+    // Update blend state attachments for first subpass
+    auto blend_state = pipeline_state.get_color_blend_state();
+    blend_state.attachments.resize(current_render_pass.render_pass->get_color_output_count(pipeline_state.get_subpass_index()));
+    pipeline_state.set_color_blend_state(blend_state);
 }
 
 void CommandBuffer::next_subpass()

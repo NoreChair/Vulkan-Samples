@@ -59,6 +59,34 @@ Framebuffer::Framebuffer(Device &device, const RenderTarget &render_target, cons
 	}
 }
 
+Framebuffer::Framebuffer(Device & device, const std::vector<core::ImageView*>& image_views, const RenderPass & render_pass) :
+    device{device}
+{
+    assert(image_views.size() >= 1);
+    extent.width = image_views[0]->get_image().get_extent().width;
+    extent.height = image_views[0]->get_image().get_extent().height;
+    std::vector<VkImageView> attachments;
+
+    for (auto &view : image_views) {
+        attachments.emplace_back(view->get_handle());
+    }
+
+    VkFramebufferCreateInfo create_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+
+    create_info.renderPass = render_pass.get_handle();
+    create_info.attachmentCount = to_u32(attachments.size());
+    create_info.pAttachments = attachments.data();
+    create_info.width = extent.width;
+    create_info.height = extent.height;
+    create_info.layers = 1;
+
+    auto result = vkCreateFramebuffer(device.get_handle(), &create_info, nullptr, &handle);
+
+    if (result != VK_SUCCESS) {
+        throw VulkanException{result, "Cannot create Framebuffer"};
+    }
+}
+
 Framebuffer::Framebuffer(Framebuffer &&other) :
     device{other.device},
     handle{other.handle},

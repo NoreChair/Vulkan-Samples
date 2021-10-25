@@ -646,6 +646,15 @@ inline void hash_param<std::map<uint32_t, std::map<uint32_t, VkDescriptorImageIn
 	}
 }
 
+template <>
+inline void hash_param<std::vector<core::ImageView*>>(
+    size_t &                            seed,
+    const std::vector<core::ImageView*> &value) {
+    for (auto &image_view : value) {
+        hash_combine(seed, image_view->get_handle());
+    }
+}
+
 template <typename T, typename... Args>
 inline void hash_param(size_t &seed, const T &first_arg, const Args &... args)
 {

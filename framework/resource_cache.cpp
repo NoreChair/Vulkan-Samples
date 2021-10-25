@@ -101,6 +101,10 @@ Framebuffer &ResourceCache::request_framebuffer(const RenderTarget &render_targe
 	return request_resource(device, recorder, framebuffer_mutex, state.framebuffers, render_target, render_pass);
 }
 
+Framebuffer &ResourceCache::request_framebuffer(const std::vector<core::ImageView*>& image_views, const RenderPass & render_pass) {
+    return request_resource(device, recorder, framebuffer_mutex, state.framebuffers, image_views, render_pass);
+}
+
 void ResourceCache::clear_pipelines()
 {
 	state.graphics_pipelines.clear();
