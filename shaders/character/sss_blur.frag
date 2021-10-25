@@ -37,18 +37,25 @@ void main(){
     float depth = texture(depthTex, v_uv).r;
     vec2 s_x = stepSize * vec2(1.0, 0.0) / (depth + correction * min(abs(dFdx(depth)), maxdd));
     vec2 finalWidth = s_x;
+    float weightScale = 0.0;
 
     vec2 offset = v_uv - finalWidth;
     for (int i = 0; i < 3; i++) {
-        color.rgb += w[i] * texture(tex1, offset).rgb;
+        vec3 diffuse = texture(tex1, offset).rgb;
+        weightScale += step(1e-10, diffuse.r) * w[i];
+        color.rgb += w[i] * diffuse;
         offset += finalWidth / 3.0;
     }
     offset += finalWidth / 3.0;
 
     for (int i = 4; i < 7; i++) {
-        color.rgb += w[i] * texture(tex1, offset).rgb;
+        vec3 diffuse = texture(tex1, offset).rgb;
+        weightScale += step(1e-10, diffuse.r) * w[i];
+        color.rgb += w[i] * diffuse;
         offset += finalWidth / 3.0;
     }
+
+    color *= min(1.0 / (weightScale + 0.382), 2.6178);
 
     o_color = color;
 }
