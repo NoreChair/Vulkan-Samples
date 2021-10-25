@@ -32,11 +32,7 @@ private:
     const std::string k_title = "Vulkan Example";
     const std::string k_name = "Character Render";
 
-    bool m_useScreenSpaceSSS{true};
-    bool m_useColorBleedAO{true};
-    bool m_useDoubleSpecular{true};
-    bool m_useSSAO{true};
-
+    vkb::sg::SubMesh* m_unitCube{nullptr};
     vkb::sg::FreeCamera* m_freeCamera{nullptr};
     vkb::sg::Camera* m_mainCamera{nullptr};
     ShadowCamera* m_lightCamera{nullptr};

@@ -34,7 +34,8 @@ void ShadowCamera::set_up(glm::vec3 light_direction, glm::vec3 center, glm::vec3
 {
 	shadow_bound = bound;
 
-	glm::mat3 world_to_camera_rotation = glm::lookAt(-light_direction, glm::vec3(0.0), glm::vec3(0.0, 1.0, 0.0));
+    shadow_texture_precision = glm::min(31u, shadow_texture_precision);
+	glm::mat3 world_to_camera_rotation = glm::lookAt(glm::vec3(0.0), light_direction, glm::vec3(0.0, 1.0, 0.0));
 	glm::mat3 camera_to_world_rotation = glm::transpose(world_to_camera_rotation);
 
 	glm::vec3 rcp_bound      = 1.0f / shadow_bound;
@@ -60,6 +61,5 @@ void ShadowCamera::set_up(glm::vec3 light_direction, glm::vec3 center, glm::vec3
 		node->get_transform().set_rotation(glm::toQuat(glm::mat3(local)));
 		node->get_transform().set_translation(local[3]);
 	}
-	// why does this happen? figure out
 	projection_matrix = glm::ortho(-bound.x, bound.x, -bound.y, bound.y, -bound.z, bound.z);
 }

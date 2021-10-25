@@ -11,6 +11,7 @@
 #include "scene_graph/components/sub_mesh.h"
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/image/astc.h"
+#include "scene_graph/components/perspective_camera.h"
 
 #include "graphic_context.h"
 #include "shadow_pass.h"
@@ -31,17 +32,15 @@ const RenderTarget::CreateFunc character_render::swap_chain_create_func = [](Ima
     return std::make_unique<RenderTarget>(std::move(images));
 };
 
+glm::vec3 shadowCenter(1.5, 7.78, -190.0);
+
+
 std::unique_ptr<vkb::Application> create_character_render() {
     return std::make_unique<character_render>();
 }
 
 character_render::character_render() {
     set_name(k_name);
-    auto &config = get_configuration();
-
-    config.insert<vkb::BoolSetting>(0, m_useScreenSpaceSSS, false);
-    config.insert<vkb::BoolSetting>(0, m_useColorBleedAO, false);
-    config.insert<vkb::BoolSetting>(0, m_useDoubleSpecular, false);
 }
 
 character_render::~character_render() {
@@ -54,13 +53,13 @@ bool character_render::prepare(vkb::Platform & platform) {
 
     auto& extent = get_render_context().get_surface_extent();
     GraphicContext::InitGraphicBuffer(get_device(), extent.width, extent.height);
-
+    RenderSetting::Init();
     prepare_resources();
     prepare_scene();
 
     // init render resource
-    //ShadowPass::Init();
-    //SubsurfacePass::Init();
+    ShadowPass::Init(get_device());
+    SubsurfacePass::Init(get_device());
     MainPass::Init(get_device());
     //SSAO::Init();
 
@@ -79,7 +78,7 @@ void character_render::prepare_resources() {
 
     Timer timer;
     timer.start();
-
+//#define LOAD_IN_MAIN_THREAD
     auto thread_count = std::thread::hardware_concurrency();
     thread_count = thread_count == 0 ? 1 : thread_count - 1;
 #ifndef LOAD_IN_MAIN_THREAD
@@ -88,14 +87,21 @@ void character_render::prepare_resources() {
     thread_count = 1;
 #endif
     // load texture
-    struct TextureInfo {
+    struct LoadTextureInfo {
         std::string name;
         bool isColor;
+        bool genMipmap;
     };
-    std::vector<TextureInfo> textures{
-        {"T_Color.png", true},
-        {"T_N.png", false},
-        {"T_AO_SSS_CA.png", false}
+
+    std::vector<LoadTextureInfo> textures{
+        {"T_Color.png", true, true},
+        {"T_N.png", false, true},
+        {"T_AO_SSS_CA.png", false, true},
+        {"T_SR.png", false, true},
+        {"T_SkinMicroNormal.png", false, true},
+        {"output_skybox.ktx", true, false},
+        {"output_iem.ktx", true, false},
+        {"output_pmrem.ktx", true, false}
     };
 
     auto image_count = textures.size();
@@ -108,29 +114,24 @@ void character_render::prepare_resources() {
             [this, textures, image_index](size_t) {
             const std::string image_path = "character/";
             std::unique_ptr<sg::Image> image = sg::Image::load(textures[image_index].name, image_path + textures[image_index].name, textures[image_index].isColor);
-            image->generate_mipmaps();
-            image->create_vk_image(get_device());
+            if (textures[image_index].genMipmap) {
+                image->generate_mipmaps(); 
+            }
+            bool isCubeMap = image->get_layers() == 6;
+            image->create_vk_image(get_device(), isCubeMap? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D, isCubeMap? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0);
             LOGI("Loadedimage #{} ({})", image_index, textures[image_index].name.c_str());
             return image;
         });
-
         image_component_futures.push_back(std::move(fut));
     }
 #else
     const std::string image_path = "character/";
     for (size_t image_index = 0; image_index < image_count; image_index++) {
-        std::unique_ptr<sg::Image> image = sg::Image::load(texture_names[image_index], image_path + texture_names[image_index]);
-        LOGI("Loadedimage #{} ({})", image_index, texture_names[image_index].c_str());
-
-        // Check whether the format is supported by the GPU
-        if (sg::is_astc(image->get_format())) {
-            if (!device.is_image_format_supported(image->get_format())) {
-                LOGW("ASTC not supported: decoding {}", image->get_name());
-                image = std::make_unique<sg::Astc>(*image);
-            }
+        std::unique_ptr<sg::Image> image = sg::Image::load(textures[image_index].name, image_path + textures[image_index].name, textures[image_index].isColor);
+        LOGI("Loadedimage #{} ({})", image_index, textures[image_index].name.c_str());
+        if (textures[image_index].genMipmap) {
+            image->generate_mipmaps();
         }
-
-        image->generate_mipmaps();
         image->create_vk_image(get_device());
         image_components.push_back(std::move(image));
     }
@@ -147,6 +148,13 @@ void character_render::prepare_resources() {
         {"depth_only.frag", "", VK_SHADER_STAGE_FRAGMENT_BIT},
         {"character.vert", "", VK_SHADER_STAGE_VERTEX_BIT},
         {"character.frag", "", VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"sss_irradiance.vert", "", VK_SHADER_STAGE_VERTEX_BIT},
+        {"sss_irradiance.frag", "", VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"sss_blur.vert", "", VK_SHADER_STAGE_VERTEX_BIT},
+        {"sss_blur.frag", "", VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"sss_blur_accum.frag", "", VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"sky.vert", "", VK_SHADER_STAGE_VERTEX_BIT},
+        {"sky.frag", "", VK_SHADER_STAGE_FRAGMENT_BIT}
     };
 
     static std::mutex shaderMutex;
@@ -162,8 +170,8 @@ void character_render::prepare_resources() {
             ShaderModule& moudle = get_device().get_resource_cache().request_shader_module(shaders[i].flags, source);
             {
                 std::lock_guard<std::mutex> lock(shaderMutex);
-                ShaderProgram::g_shaderSources.emplace(shaders[i].name, std::move(source));
-                ShaderProgram::g_shaderModules.emplace(shaders[i].name, &moudle);
+                GraphicResources::g_shaderSources.emplace(shaders[i].name, std::move(source));
+                GraphicResources::g_shaderModules.emplace(shaders[i].name, &moudle);
                 shaderLoadedCount++;
             }
             cv.notify_one();
@@ -174,6 +182,11 @@ void character_render::prepare_resources() {
 
     // load from gltf
     load_scene("character/Head.gltf");
+    
+    GLTFLoader loader{device};
+    auto unitCube = loader.read_simple_model_from_file("character/cube.gltf", 0);
+    m_unitCube = unitCube.get();
+    scene->add_component(std::move(unitCube));
 
     // Sync, update images
 #ifndef LOAD_IN_MAIN_THREAD
@@ -181,15 +194,9 @@ void character_render::prepare_resources() {
         image_components.push_back(fut.get());
     }
 #endif
-
-    std::vector<uint8_t> white {255,255,255,255};
-    std::vector<uint8_t> blue {0,0,255,255};
-    std::unique_ptr<sg::Image> whiteImage = std::make_unique<sg::Image>("white", std::move(white), std::move(std::vector<sg::Mipmap>{sg::Mipmap{0,0,{1,1,1}}}));
-    whiteImage->create_vk_image(device);
-    std::unique_ptr<sg::Image> blueImage = std::make_unique<sg::Image>("blue", std::move(blue), std::move(std::vector<sg::Mipmap>{sg::Mipmap{0,0,{1,1,1}}}));
-    blueImage->create_vk_image(device);
-    image_components.push_back(std::move(whiteImage));
-    image_components.push_back(std::move(blueImage));
+    for (size_t i = 0; i < image_components.size(); i++) {
+        GraphicResources::g_sceneTextures[i] = &image_components[i]->get_vk_image_view();
+    }
 
     RenderUtils::UploadImage(get_device(), image_components);
     scene->set_components(std::move(image_components));
@@ -204,26 +211,13 @@ void character_render::prepare_resources() {
 
 void character_render::prepare_scene() {
     // create scene, camera, light
-    auto  sceneAABB = std::make_unique<sg::AABB>();
-    auto& meshs = scene->get_components<sg::Mesh>();
-
-    for (size_t i = 0; i < meshs.size(); i++) {
-        const auto &bounds = meshs[i]->get_bounds();
-        for (auto &node : meshs[i]->get_nodes()) {
-            auto     node_transform = node->get_transform().get_world_matrix();
-            sg::AABB world_bounds{bounds.get_min(), bounds.get_max()};
-            world_bounds.transform(node_transform);
-            sceneAABB->update(world_bounds.get_min());
-            sceneAABB->update(world_bounds.get_max());
-        }
-    }
 
     auto &camera_node = vkb::add_free_camera(*scene, "main_camera", get_render_context().get_surface_extent(), 0.5);
     m_freeCamera = (vkb::sg::FreeCamera*)&camera_node.get_component<vkb::sg::Script>();
     m_mainCamera = &camera_node.get_component<vkb::sg::Camera>();
-    m_mainCamera->set_far_plane(10000.0f);
+    m_mainCamera->set_far_plane(1000.0f);
     m_mainCamera->set_near_plane(0.01f);
-    m_mainCamera->get_node()->get_transform().set_translation({1.5, 5.78, -170.0});
+    m_mainCamera->get_node()->get_transform().set_translation({0.0, 6.78, -170.0});
 
     auto& lights = scene->get_components<sg::Light>();
     auto  iter = std::find_if(lights.begin(), lights.end(), [](sg::Light *iter) -> bool { return iter->get_light_type() == sg::LightType::Directional; });
@@ -232,8 +226,8 @@ void character_render::prepare_scene() {
     // sun direction
     sg::Light* directLight = *iter;
     sg::LightProperties sunLight;
-    sunLight.direction = glm::normalize(glm::vec3(-0.615, -0.064, 0.786));
-    sunLight.intensity = 10.0f;
+    sunLight.direction = glm::normalize(glm::vec3(0.697, -0.557, -0.452));
+    sunLight.intensity = 7.5f;
     directLight->set_properties(sunLight);
 
     // add shadow camera
@@ -242,13 +236,9 @@ void character_render::prepare_scene() {
     shadowCamera->set_node(*lightNode);
     m_lightCamera = shadowCamera.get();
     glm::vec2 shadowMapExtent = glm::vec2(GraphicContext::g_shadowImage->get_extent().width, GraphicContext::g_shadowImage->get_extent().height);
-    m_lightCamera->set_up(sunLight.direction, sceneAABB->get_center(), glm::vec3(500, 500, 500), shadowMapExtent, 32);
-    lightNode->get_transform().set_translation(sceneAABB->get_center() - sunLight.direction * 500.0f);
+    lightNode->get_transform().set_translation(shadowCenter - sunLight.direction * 64.0f);
+    m_lightCamera->set_up(sunLight.direction, shadowCenter, glm::vec3(32, 32, 64), shadowMapExtent, 16);
     scene->add_component(std::move(shadowCamera), *lightNode);
-
-    if (!scene->get_root_node().has_component<sg::AABB>()) {
-        scene->add_component(std::move(sceneAABB), scene->get_root_node());
-    }
 }
 
 void character_render::prepare_render_context() {
@@ -260,10 +250,13 @@ void character_render::prepare_render_context() {
 
 void character_render::request_gpu_features(vkb::PhysicalDevice & gpu) {
     VkFormatFeatureFlags flags = gpu.get_format_properties(VK_FORMAT_R8G8B8A8_SRGB).optimalTilingFeatures;
-    bool supportBlit = (flags & (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) == (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
+    bool support = (flags & (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) == (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
     flags = gpu.get_format_properties(VK_FORMAT_B8G8R8A8_SRGB).optimalTilingFeatures;
-    supportBlit = supportBlit && (flags & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
-    assert(supportBlit);
+    support = support && (flags & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
+    assert(support);
+
+    support = (gpu.get_format_properties(VK_FORMAT_D16_UNORM).optimalTilingFeatures & (VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) != 0;
+    assert(support);
 }
 
 void character_render::resize(const uint32_t width, const uint32_t height) {
@@ -292,9 +285,8 @@ void character_render::render(float delta_time) {
     RenderUtils::GetSortedNodes(scene.get(), lightForward, m_lightCamera->get_shadow_center(), &shadowNodes);
 
     // reverse z
-    std::vector<VkClearValue> zeroClearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0), initializers::clear_depth_stencil_value(0.0, 0)};
-    // forward z
-    std::vector<VkClearValue> oneClearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0),initializers::clear_depth_stencil_value(1.0, 0)};
+    std::vector<VkClearValue> zeroClearValue{initializers::clear_color_value(0.0f, 0.0f, 0.0f, 0.0f), initializers::clear_depth_stencil_value(0.0f, 0.0f)};
+    std::vector<VkClearValue> shadowClearValue{initializers::clear_depth_stencil_value(1.0f, 0.0f)};
         
     VkExtent2D     extent = get_render_context().get_surface_extent();
     RenderContext &context = get_render_context();
@@ -320,7 +312,48 @@ void character_render::render(float delta_time) {
 
     commandBuffer.image_memory_barrier(GraphicContext::g_offScreenRT->get_views()[1], barrier);
 
+    // shadow pass
     {
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.src_access_mask = 0;
+        barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        commandBuffer.image_memory_barrier(GraphicContext::g_shadowImage->get_views()[0], barrier);
+
+        std::vector<LoadStoreInfo> loadStoreInfos;
+        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+
+        std::vector<SubpassInfo> subPassInfos;
+        subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+        auto &renderPass = device->get_resource_cache().request_render_pass(GraphicContext::g_shadowImage->get_attachments(), loadStoreInfos, subPassInfos);
+        auto &frameBuffer = device->get_resource_cache().request_framebuffer(*GraphicContext::g_shadowImage, renderPass);
+
+        set_viewport_and_scissor(commandBuffer, GraphicContext::g_shadowImage->get_extent());
+        commandBuffer.begin_render_pass(*GraphicContext::g_shadowImage, renderPass, frameBuffer, shadowClearValue);
+
+        ShadowPass::Draw(context, commandBuffer, m_lightCamera, &opaqueNodes);
+
+        commandBuffer.end_render_pass();
+    }
+
+    // subsurface scattering pass
+    {
+        SubsurfacePass::Draw(context, commandBuffer, m_mainCamera, &opaqueNodes, scene.get());
+    }
+    
+    // main pass
+    {
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        barrier.src_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        commandBuffer.image_memory_barrier(GraphicContext::g_shadowImage->get_views()[0], barrier);
+
         std::vector<LoadStoreInfo> loadStoreInfos;
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
@@ -334,8 +367,9 @@ void character_render::render(float delta_time) {
         set_viewport_and_scissor(commandBuffer, get_render_context().get_surface_extent());
         commandBuffer.begin_render_pass(*GraphicContext::g_offScreenRT, renderPass,frameBuffer, zeroClearValue);
 
-        MainPass::Draw(context, commandBuffer, m_mainCamera, &opaqueNodes, scene.get());
-        
+        MainPass::Draw(context, commandBuffer, m_mainCamera, m_lightCamera, &opaqueNodes, scene.get());
+        MainPass::DrawSky(context, commandBuffer, m_mainCamera, m_unitCube);
+
         // draw gui
         if (gui) {
             gui->draw(commandBuffer);
@@ -415,40 +449,64 @@ void character_render::draw_gui() {
             float speed = m_freeCamera->get_speed();
             ImGui::SliderFloat("Camera Move Speed", &speed, 0.1, 5.0);
             m_freeCamera->set_speed(speed);
-            const auto& cameraRTS = m_mainCamera->get_node()->get_transform();
-            const auto& cameraPosition = cameraRTS.get_translation();
-            ImColor green(0.0f, 1.0f, 0.0f);
             ImGui::SameLine();
-            ImGui::TextColored(green, "Main Camera, position : %.2f, %.2f, %.2f.",
-                cameraPosition.x, cameraPosition.y, cameraPosition.z);
+            if (ImGui::Button("Reset")) {
+                m_freeCamera->get_node().get_transform().set_translation({0.0, 6.78, -170.0});
+                m_freeCamera->get_node().get_transform().set_rotation(glm::quat(1.0,0.0,0.0,0.0));
+            }
         }
-        
+
+        ImGui::Separator();
         if (ImGui::CollapsingHeader("Light Options")) {
             auto& lights = scene->get_components<sg::Light>();
             auto lightProperties(lights[0]->get_properties());
             ImGui::DragFloat3("Direction", &lightProperties.direction.r, 0.01, -1.0f, 1.0f);
             ImGui::SameLine();
             ImGui::DragFloat("Intensity", &lightProperties.intensity, 0.1, 0.1, 10.0);
+            ImGui::ColorEdit3("Color", &lightProperties.color.r);
             lightProperties.direction = glm::normalize(lightProperties.direction);
             lights[0]->set_properties(lightProperties);
+
+            glm::vec3 up(0.0f, 1.0f, 0.0f);
+            float cosin = glm::dot(lightProperties.direction, up);
+            if (glm::abs(cosin) > 0.99) {
+                up.y = 0.0f;
+                up.z = -glm::sign(cosin);
+            }
+            auto& transform = lights[0]->get_node()->get_transform();
+            glm::quat rotation = glm::toQuat(glm::lookAt(glm::vec3(0.0), lightProperties.direction, up));
+            transform.set_rotation(rotation);
+            transform.set_translation(shadowCenter - lightProperties.direction * 64.0f);
+            glm::vec2 shadowMapExtent = glm::vec2(GraphicContext::g_shadowImage->get_extent().width, GraphicContext::g_shadowImage->get_extent().height);
+            m_lightCamera->set_up(lightProperties.direction, shadowCenter, glm::vec3(32, 32, 64), shadowMapExtent, 16);
         }
 
         ImGui::Separator();
-        ImGui::Text("Render Options :");
-        ImGui::BeginChild("Render Options", ImVec2(0, ImGui::GetFontSize() * 3.0f));
-        {
-            ImGui::Checkbox("ScreenSpace SSS", &m_useScreenSpaceSSS);
-            ImGui::Checkbox("Color Bleed AO", &m_useColorBleedAO);
-            ImGui::Checkbox("Double Specular", &m_useDoubleSpecular);
-            ImGui::Checkbox("SSAO", &m_useSSAO);
+        if (ImGui::CollapsingHeader("Render Options")) {
+            ImGui::BeginChild("", ImVec2(0, ImGui::GetFontSize() * 4.0f));
+            {
+                ImGui::DragFloat3("Shadow Bias", RenderSetting::g_shadowBias, 0.1f, -100.0f, 100.0f);
+                ImGui::DragFloat("Normal Bias", &RenderSetting::g_shadowNormalBias, 0.01f, 0.0f, 10.0f);
+                ImGui::SliderFloat("Roughtness", &RenderSetting::g_roughness, 0.01, 1.0);
+                ImGui::SliderFloat("Metalness", &RenderSetting::g_metalness, 0.01, 1.0);
+                ImGui::Checkbox("Only SSS", &RenderSetting::g_onlySSS);
+                ImGui::Checkbox("Only Shadow", &RenderSetting::g_onlyShadow);
+                ImGui::Checkbox("ScreenSpace SSS", &RenderSetting::g_useScreenSpaceSSS);
+                ImGui::SliderFloat("SSS Level", &RenderSetting::g_sssLevel, 0.0, 1000.0);                
+                ImGui::SliderFloat("SSS Correction", &RenderSetting::g_sssCorrection, 0.0, 10000.0);
+                ImGui::SliderFloat("SSS Max DD", &RenderSetting::g_sssMaxDD, 0.001, 1.0);
+                ImGui::Checkbox("Color Bleed AO", &RenderSetting::g_useColorBleedAO);
+                //ImGui::Checkbox("Double Specular", &RenderSetting::g_useDoubleSpecular);
+                //ImGui::Checkbox("SSAO", &RenderSetting::g_useSSAO);
+            }
+            ImGui::EndChild();
         }
-        ImGui::EndChild();
-    }, 6);
+    }, 7);
 }
 
 void character_render::finish() {
     VulkanSample::finish();
     GraphicContext::DestroyGraphicBuffer();
-    ShaderProgram::g_shaderSources.clear();
-    ShaderProgram::g_shaderModules.clear();
+    GraphicResources::g_shaderSources.clear();
+    GraphicResources::g_shaderModules.clear();
 }

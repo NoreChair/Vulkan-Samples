@@ -1,19 +1,45 @@
 #include "graphic_context.h"
 
 namespace GraphicContext {
+
+    const float k_fullScreenTriangle[9] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
+    const float k_unitCubeVertex[]{
+       1.000000, 1.000000, -1.000000,
+       1.000000, -1.000000, -1.000000,
+       1.000000, 1.000000, 1.000000,
+       1.000000, -1.000000, 1.000000,
+       -1.000000, 1.000000, -1.000000,
+       -1.000000, -1.000000, -1.000000,
+       -1.000000, 1.000000, 1.000000,
+       -1.000000, -1.000000, 1.000000
+    };
+    const int k_unitCubeFace[]{
+        5, 3, 1,
+        3, 8, 4,
+        7, 6, 8,
+        2, 8, 6,
+        1, 4, 2,
+        5, 2, 6,
+        5, 7, 3,
+        3, 7, 8,
+        7, 5, 6,
+        2, 4, 8,
+        1, 3, 4,
+        5, 1, 2,
+    };
+
     std::unique_ptr<vkb::RenderTarget> g_offScreenRT{nullptr};
+    std::unique_ptr<vkb::RenderTarget> g_shadowImage{nullptr};
 
     std::unique_ptr<vkb::core::Image> g_characterSSS{nullptr};
-    std::unique_ptr<vkb::core::Image> g_characterDepthStencil{nullptr};
-    std::unique_ptr<vkb::core::Image> g_shadowImage{nullptr};
-
     std::unique_ptr<vkb::core::Image> g_linearDepth{nullptr};
+    std::unique_ptr<vkb::core::Image> g_characterDepthStencil{nullptr};
+
     std::unique_ptr<vkb::core::Image> g_transientBlurH{nullptr};
     std::unique_ptr<vkb::core::Image> g_transientBlurV{nullptr};
 
     std::unique_ptr<vkb::core::ImageView> g_characterSSSView{nullptr};
     std::unique_ptr<vkb::core::ImageView> g_characterDepthStencilView{nullptr};
-    std::unique_ptr<vkb::core::ImageView> g_shadowImageView{nullptr};
 
     std::unique_ptr<vkb::core::ImageView> g_linearDepthView{nullptr};
     std::unique_ptr<vkb::core::ImageView> g_transientBlurHView{nullptr};
@@ -21,11 +47,14 @@ namespace GraphicContext {
 
     std::unique_ptr<vkb::core::Sampler> g_linearClampSampler{nullptr};
     std::unique_ptr<vkb::core::Sampler> g_pointClampSampler{nullptr};
+    std::unique_ptr<vkb::core::Sampler> g_shadowSampler{nullptr};
+    
+    std::unique_ptr<vkb::core::Buffer> g_fullScreenTriangle;
 
     void InitGraphicBuffer(vkb::Device& device, uint32_t width, uint32_t height) {
         VkExtent3D fullSize{width, height, 1};
         VkExtent3D halfSize{width >> 1 , height >> 1, 1};
-        VkExtent3D shadowSize{1024, 1024, 1};
+        VkExtent3D shadowSize{512, 512, 1};
 
         VkFormat depthStencilFormat = VK_FORMAT_D24_UNORM_S8_UINT;
         VkFormat colorFormat = VK_FORMAT_R8G8B8A8_SRGB;
@@ -48,19 +77,22 @@ namespace GraphicContext {
         imgs.emplace_back(std::move(depthImage));
         g_offScreenRT = std::make_unique<vkb::RenderTarget>(std::move(imgs));
 
-        g_characterSSS = std::make_unique<vkb::core::Image>(device, halfSize, colorFormat, outputAndShaderFlag | storageFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-        g_characterDepthStencil = std::make_unique<vkb::core::Image>(device, halfSize, depthStencilFormat, transientDepthInOutFlag, transientMemory);
-        g_shadowImage = std::make_unique<vkb::core::Image>(device, shadowSize, VK_FORMAT_D32_SFLOAT, shadowMapFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+        imgs.clear();
+        vkb::core::Image shadowImage(device, shadowSize, VK_FORMAT_D32_SFLOAT, shadowMapFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+        imgs.push_back(std::move(shadowImage));
+        g_shadowImage = std::make_unique<vkb::RenderTarget>(std::move(imgs));
 
-        g_linearDepth = std::make_unique<vkb::core::Image>(device, fullSize, VK_FORMAT_R16_SFLOAT, outputAndShaderFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-        g_transientBlurH = std::make_unique<vkb::core::Image>(device, halfSize, colorFormat, storageFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-        g_transientBlurV = std::make_unique<vkb::core::Image>(device, halfSize, colorFormat, storageFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+        g_characterSSS = std::make_unique<vkb::core::Image>(device, halfSize, colorFormat, outputAndShaderFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+        g_characterDepthStencil = std::make_unique<vkb::core::Image>(device, halfSize, depthStencilFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+        g_linearDepth = std::make_unique<vkb::core::Image>(device, halfSize, VK_FORMAT_R32_SFLOAT, outputAndShaderFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
-        g_characterSSSView = std::make_unique<vkb::core::ImageView>(*g_linearDepth, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
+        g_transientBlurH = std::make_unique<vkb::core::Image>(device, halfSize, colorFormat, outputAndShaderFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+        g_transientBlurV = std::make_unique<vkb::core::Image>(device, halfSize, colorFormat, outputAndShaderFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+
+        g_characterSSSView = std::make_unique<vkb::core::ImageView>(*g_characterSSS, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
         g_characterDepthStencilView = std::make_unique<vkb::core::ImageView>(*g_characterDepthStencil, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
-        g_shadowImageView = std::make_unique<vkb::core::ImageView>(*g_shadowImage, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
-
         g_linearDepthView = std::make_unique<vkb::core::ImageView>(*g_linearDepth, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
+
         g_transientBlurHView = std::make_unique<vkb::core::ImageView>(*g_transientBlurH, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
         g_transientBlurVView = std::make_unique<vkb::core::ImageView>(*g_transientBlurV, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
 
@@ -68,7 +100,7 @@ namespace GraphicContext {
         samplerCreateInfo.maxAnisotropy = 1.0f;
         samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
         samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
-        samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -76,9 +108,18 @@ namespace GraphicContext {
         samplerCreateInfo.maxLod = VK_LOD_CLAMP_NONE;
         g_linearClampSampler = std::make_unique<vkb::core::Sampler>(device, samplerCreateInfo);
 
+        samplerCreateInfo.compareEnable = VK_TRUE;
+        samplerCreateInfo.compareOp = VK_COMPARE_OP_LESS;
+        g_shadowSampler = std::make_unique<vkb::core::Sampler>(device, samplerCreateInfo);
+
+        samplerCreateInfo.compareEnable = VK_FALSE;
+        samplerCreateInfo.compareOp = VK_COMPARE_OP_NEVER;
         samplerCreateInfo.magFilter = VK_FILTER_NEAREST;
         samplerCreateInfo.minFilter = VK_FILTER_NEAREST;
         g_pointClampSampler = std::make_unique<vkb::core::Sampler>(device, samplerCreateInfo);
+
+        g_fullScreenTriangle = std::make_unique<vkb::core::Buffer>(device, sizeof(k_fullScreenTriangle), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+        g_fullScreenTriangle->update((void*)k_fullScreenTriangle, sizeof(k_fullScreenTriangle));  
     }
 
     void ResizeGraphicBuffer(vkb::Device& device, uint32_t width, uint32_t height) {
@@ -88,28 +129,58 @@ namespace GraphicContext {
 
     void DestroyGraphicBuffer() {
         g_offScreenRT.reset();
+        g_shadowImage.reset();
+
         g_linearDepthView.reset();
         g_transientBlurHView.reset();
         g_transientBlurVView.reset();
 
         g_characterSSSView.reset();
         g_characterDepthStencilView.reset();
-        g_shadowImageView.reset();
 
         g_characterSSS.reset();
         g_characterDepthStencil.reset();
-        g_shadowImage.reset();
-
         g_linearDepth.reset();
+
         g_transientBlurH.reset();
         g_transientBlurV.reset();
 
         g_linearClampSampler.reset();
         g_pointClampSampler.reset();
+        g_shadowSampler.reset();
+
+        g_fullScreenTriangle.reset();
     }
 }
 
-namespace ShaderProgram {
+namespace GraphicResources {
+    const vkb::core::ImageView * g_sceneTextures[ETextureType::TextureCount];
     std::unordered_map<std::string, vkb::ShaderSource> g_shaderSources;
     std::unordered_map<std::string, vkb::ShaderModule*> g_shaderModules;
+}
+
+namespace RenderSetting {
+    float g_shadowBias[3];
+    float g_shadowNormalBias;
+    float g_roughness;
+    float g_metalness;
+    float g_sssLevel;
+    float g_sssCorrection;
+    float g_sssMaxDD;
+    bool g_onlySSS{false};
+    bool g_onlyShadow{false};
+    bool g_useScreenSpaceSSS{true};
+    bool g_useColorBleedAO{true};
+    bool g_useDoubleSpecular{false};
+    bool g_useSSAO{false};
+
+    void Init() {
+        g_shadowBias[0] = 0.0f; g_shadowBias[1] = 0.0f; g_shadowBias[2] = 3.0f;
+        g_shadowNormalBias = 0.2f;
+        g_roughness = 0.45f;
+        g_metalness = 0.0f;
+        g_sssLevel = 400.0f;
+        g_sssCorrection = 800.0f;
+        g_sssMaxDD = 0.001f;
+    }
 }
