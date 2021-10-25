@@ -31,6 +31,8 @@ class Framebuffer
   public:
 	Framebuffer(Device &device, const RenderTarget &render_target, const RenderPass &render_pass);
 
+    Framebuffer(Device &device, const std::vector<core::ImageView*> &image_views, const RenderPass &render_pass);
+
 	Framebuffer(const Framebuffer &) = delete;
 
 	Framebuffer(Framebuffer &&other);

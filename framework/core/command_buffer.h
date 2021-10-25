@@ -128,6 +128,8 @@ class CommandBuffer
 
 	void begin_render_pass(const RenderTarget &render_target, const RenderPass &render_pass, const Framebuffer &framebuffer, const std::vector<VkClearValue> &clear_values, VkSubpassContents contents = VK_SUBPASS_CONTENTS_INLINE);
 
+    void begin_render_pass(const VkExtent2D& extent, const RenderPass &render_pass, const Framebuffer &framebuffer, const std::vector<VkClearValue> &clear_values, VkSubpassContents contents = VK_SUBPASS_CONTENTS_INLINE);
+
 	void next_subpass();
 
 	void execute_commands(CommandBuffer &secondary_command_buffer);

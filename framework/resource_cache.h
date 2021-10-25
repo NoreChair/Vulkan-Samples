@@ -118,6 +118,9 @@ class ResourceCache
 	Framebuffer &request_framebuffer(const RenderTarget &render_target,
 	                                 const RenderPass &  render_pass);
 
+    Framebuffer &request_framebuffer(const std::vector<core::ImageView*> & image_views,
+                                     const RenderPass & render_pass);
+
 	void clear_pipelines();
 
 	/// @brief Update those descriptor sets referring to old views
