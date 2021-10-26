@@ -8,9 +8,11 @@
 #include "rendering/render_target.h"
 
 namespace GraphicContext {
-    extern std::unique_ptr<vkb::RenderTarget> g_offScreenRT;
     extern std::unique_ptr<vkb::RenderTarget> g_shadowImage;
 
+    extern std::unique_ptr<vkb::core::Image> g_sceneDepth;
+    extern std::unique_ptr<vkb::core::Image> g_sceneColorMS;
+    extern std::unique_ptr<vkb::core::Image> g_sceneDepthMS;
     extern std::unique_ptr<vkb::core::Image> g_characterSSS;
     extern std::unique_ptr<vkb::core::Image> g_linearDepth;
     extern std::unique_ptr<vkb::core::Image> g_characterDepthStencil;
@@ -18,6 +20,9 @@ namespace GraphicContext {
     extern std::unique_ptr<vkb::core::Image> g_transientBlurH;
     extern std::unique_ptr<vkb::core::Image> g_transientBlurV;
 
+    extern std::unique_ptr<vkb::core::ImageView> g_sceneDepthView;
+    extern std::unique_ptr<vkb::core::ImageView> g_sceneColorMSView;
+    extern std::unique_ptr<vkb::core::ImageView> g_sceneDepthMSView;
     extern std::unique_ptr<vkb::core::ImageView> g_characterSSSView;
     extern std::unique_ptr<vkb::core::ImageView> g_characterDepthStencilView;
 
@@ -71,5 +76,9 @@ namespace RenderSetting {
     extern bool g_useDoubleSpecular;
     extern bool g_useSSAO;
 
-    void Init();
+    extern bool g_depthResolveSupported;
+    extern VkSampleCountFlagBits g_multiSampleCount;
+    extern VkResolveModeFlagBits g_depthResolveMode;
+
+    void InitRenderSetting();
 }

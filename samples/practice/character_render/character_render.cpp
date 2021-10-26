@@ -24,6 +24,8 @@
 
 using namespace vkb;
 using namespace vkb::core;
+using namespace GraphicContext;
+using namespace RenderSetting;
 
 const RenderTarget::CreateFunc character_render::swap_chain_create_func = [](Image &&swapchain_image) -> std::unique_ptr<RenderTarget> {
     const auto& physicalDevice = swapchain_image.get_device().get_gpu().get_handle();
@@ -43,17 +45,17 @@ character_render::character_render() {
     set_name(k_name);
 }
 
-character_render::~character_render() {
-}
+character_render::~character_render() {}
 
 bool character_render::prepare(vkb::Platform & platform) {
     if (!VulkanSample::prepare(platform)) {
         return false;
     }
 
+    prepare_msaa_mode();
     auto& extent = get_render_context().get_surface_extent();
-    GraphicContext::InitGraphicBuffer(get_device(), extent.width, extent.height);
-    RenderSetting::Init();
+    InitGraphicBuffer(get_device(), extent.width, extent.height);
+    InitRenderSetting();
     prepare_resources();
     prepare_scene();
 
@@ -73,12 +75,46 @@ const std::vector<const char *> character_render::get_validation_layers() {
     return {};
 }
 
+void character_render::prepare_msaa_mode() {
+
+    if (instance->is_enabled(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
+        VkPhysicalDeviceProperties2KHR properties{};
+        properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
+        VkPhysicalDeviceDepthStencilResolvePropertiesKHR resolveProperties{};
+        resolveProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES_KHR;
+        properties.pNext = static_cast<void *>(&resolveProperties);
+        vkGetPhysicalDeviceProperties2KHR(get_device().get_gpu().get_handle(), &properties);
+
+        g_multiSampleCount = (properties.properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0? VK_SAMPLE_COUNT_4_BIT: VK_SAMPLE_COUNT_1_BIT;
+
+        if (resolveProperties.supportedDepthResolveModes == 0) {
+            LOGW("No depth stencil resolve modes supported");
+            g_depthResolveSupported = false;
+            g_depthResolveMode = VK_RESOLVE_MODE_NONE;
+        } else {
+            g_depthResolveSupported = true;
+            // All possible modes are listed here from most to least preferred as default
+            std::vector<VkResolveModeFlagBits> modes = {VK_RESOLVE_MODE_SAMPLE_ZERO_BIT, VK_RESOLVE_MODE_MIN_BIT,
+                                                        VK_RESOLVE_MODE_MAX_BIT, VK_RESOLVE_MODE_AVERAGE_BIT};
+            for (auto &mode : modes) {
+                if (resolveProperties.supportedDepthResolveModes & mode) {
+                    g_depthResolveMode = mode;
+                }
+            }
+        }
+    } else {
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(get_device().get_gpu().get_handle(), &properties);
+        g_multiSampleCount = (properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0 ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
+    }
+}
+
 void character_render::prepare_resources() {
     auto& device = get_render_context().get_device();
 
     Timer timer;
     timer.start();
-//#define LOAD_IN_MAIN_THREAD
+    //#define LOAD_IN_MAIN_THREAD
     auto thread_count = std::thread::hardware_concurrency();
     thread_count = thread_count == 0 ? 1 : thread_count - 1;
 #ifndef LOAD_IN_MAIN_THREAD
@@ -115,10 +151,10 @@ void character_render::prepare_resources() {
             const std::string image_path = "character/";
             std::unique_ptr<sg::Image> image = sg::Image::load(textures[image_index].name, image_path + textures[image_index].name, textures[image_index].isColor);
             if (textures[image_index].genMipmap) {
-                image->generate_mipmaps(); 
+                image->generate_mipmaps();
             }
             bool isCubeMap = image->get_layers() == 6;
-            image->create_vk_image(get_device(), isCubeMap? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D, isCubeMap? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0);
+            image->create_vk_image(get_device(), isCubeMap ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D, isCubeMap ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0);
             LOGI("Loadedimage #{} ({})", image_index, textures[image_index].name.c_str());
             return image;
         });
@@ -182,7 +218,7 @@ void character_render::prepare_resources() {
 
     // load from gltf
     load_scene("character/Head.gltf");
-    
+
     GLTFLoader loader{device};
     auto unitCube = loader.read_simple_model_from_file("character/cube.gltf", 0);
     m_unitCube = unitCube.get();
@@ -235,7 +271,7 @@ void character_render::prepare_scene() {
     auto shadowCamera = std::make_unique<ShadowCamera>("main_light_camera");
     shadowCamera->set_node(*lightNode);
     m_lightCamera = shadowCamera.get();
-    glm::vec2 shadowMapExtent = glm::vec2(GraphicContext::g_shadowImage->get_extent().width, GraphicContext::g_shadowImage->get_extent().height);
+    glm::vec2 shadowMapExtent = glm::vec2(g_shadowImage->get_extent().width, g_shadowImage->get_extent().height);
     lightNode->get_transform().set_translation(shadowCenter - sunLight.direction * 64.0f);
     m_lightCamera->set_up(sunLight.direction, shadowCenter, glm::vec3(32, 32, 64), shadowMapExtent, 16);
     scene->add_component(std::move(shadowCamera), *lightNode);
@@ -243,26 +279,16 @@ void character_render::prepare_scene() {
 
 void character_render::prepare_render_context() {
     auto &properties = render_context->get_swapchain().get_properties();
-    properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     render_context->prepare(1, swap_chain_create_func);
 }
 
-
 void character_render::request_gpu_features(vkb::PhysicalDevice & gpu) {
-    VkFormatFeatureFlags flags = gpu.get_format_properties(VK_FORMAT_R8G8B8A8_SRGB).optimalTilingFeatures;
-    bool support = (flags & (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) == (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
-    flags = gpu.get_format_properties(VK_FORMAT_B8G8R8A8_SRGB).optimalTilingFeatures;
-    support = support && (flags & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
-    assert(support);
-
-    support = (gpu.get_format_properties(VK_FORMAT_D16_UNORM).optimalTilingFeatures & (VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) != 0;
-    assert(support);
 }
 
 void character_render::resize(const uint32_t width, const uint32_t height) {
     VulkanSample::resize(width, height);
     device->wait_idle();
-    GraphicContext::ResizeGraphicBuffer(get_device(), width, height);
+    ResizeGraphicBuffer(get_device(), width, height);
 }
 
 void character_render::update(float delta_time) {
@@ -287,31 +313,16 @@ void character_render::render(float delta_time) {
     // reverse z
     std::vector<VkClearValue> zeroClearValue{initializers::clear_color_value(0.0f, 0.0f, 0.0f, 0.0f), initializers::clear_depth_stencil_value(0.0f, 0.0f)};
     std::vector<VkClearValue> shadowClearValue{initializers::clear_depth_stencil_value(1.0f, 0.0f)};
-        
+
     VkExtent2D     extent = get_render_context().get_surface_extent();
     RenderContext &context = get_render_context();
     CommandBuffer &commandBuffer = context.begin();
     commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-    // image barrier to color output
+    auto& targetView = const_cast<core::ImageView&>(render_context->get_active_frame().get_render_target().get_views()[0]);
+
     ImageMemoryBarrier barrier{};
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    barrier.src_access_mask = 0;
-    barrier.dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    commandBuffer.image_memory_barrier(GraphicContext::g_offScreenRT->get_views()[0], barrier);
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    barrier.src_access_mask = 0;
-    barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    commandBuffer.image_memory_barrier(GraphicContext::g_offScreenRT->get_views()[1], barrier);
-
+  
     // shadow pass
     {
         barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -320,7 +331,7 @@ void character_render::render(float delta_time) {
         barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
         barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        commandBuffer.image_memory_barrier(GraphicContext::g_shadowImage->get_views()[0], barrier);
+        commandBuffer.image_memory_barrier(g_shadowImage->get_views()[0], barrier);
 
         std::vector<LoadStoreInfo> loadStoreInfos;
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
@@ -328,11 +339,11 @@ void character_render::render(float delta_time) {
         std::vector<SubpassInfo> subPassInfos;
         subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
-        auto &renderPass = device->get_resource_cache().request_render_pass(GraphicContext::g_shadowImage->get_attachments(), loadStoreInfos, subPassInfos);
-        auto &frameBuffer = device->get_resource_cache().request_framebuffer(*GraphicContext::g_shadowImage, renderPass);
+        auto &renderPass = device->get_resource_cache().request_render_pass(g_shadowImage->get_attachments(), loadStoreInfos, subPassInfos);
+        auto &frameBuffer = device->get_resource_cache().request_framebuffer(*g_shadowImage, renderPass);
 
-        set_viewport_and_scissor(commandBuffer, GraphicContext::g_shadowImage->get_extent());
-        commandBuffer.begin_render_pass(*GraphicContext::g_shadowImage, renderPass, frameBuffer, shadowClearValue);
+        set_viewport_and_scissor(commandBuffer, g_shadowImage->get_extent());
+        commandBuffer.begin_render_pass(*g_shadowImage, renderPass, frameBuffer, shadowClearValue);
 
         ShadowPass::Draw(context, commandBuffer, m_lightCamera, &opaqueNodes);
 
@@ -343,29 +354,79 @@ void character_render::render(float delta_time) {
     {
         SubsurfacePass::Draw(context, commandBuffer, m_mainCamera, &opaqueNodes, scene.get());
     }
-    
+
     // main pass
     {
+        bool msaaEnable = g_multiSampleCount != VK_SAMPLE_COUNT_1_BIT;
+
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.src_access_mask = 0;
+        barrier.dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        commandBuffer.image_memory_barrier(targetView, barrier);
+
+        if (msaaEnable) {
+            commandBuffer.image_memory_barrier(*g_sceneColorMSView, barrier);
+
+            barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barrier.src_access_mask = 0;
+            barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            barrier.dst_stage_mask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            commandBuffer.image_memory_barrier(*g_sceneDepthMSView, barrier);
+        } else {
+            barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barrier.src_access_mask = 0;
+            barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            barrier.dst_stage_mask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            commandBuffer.image_memory_barrier(*g_sceneDepthView, barrier);
+        }
+
         barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         barrier.src_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
         barrier.old_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        commandBuffer.image_memory_barrier(GraphicContext::g_shadowImage->get_views()[0], barrier);
-
-        std::vector<LoadStoreInfo> loadStoreInfos;
-        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+        commandBuffer.image_memory_barrier(g_shadowImage->get_views()[0], barrier);
 
         std::vector<SubpassInfo> subPassInfos;
-        subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+        std::vector<Attachment> attachments;
+        std::vector<vkb::core::ImageView*> imgs;
+        std::vector<LoadStoreInfo> loadStoreInfos;
+      
+        if (msaaEnable) {
+            subPassInfos.emplace_back(SubpassInfo{{}, {0}, {2}, false, 0, VK_RESOLVE_MODE_NONE});
 
-        auto &renderPass = device->get_resource_cache().request_render_pass(GraphicContext::g_offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
-        auto &frameBuffer = device->get_resource_cache().request_framebuffer(*GraphicContext::g_offScreenRT, renderPass);
+            attachments.emplace_back(Attachment{g_sceneColorMS->get_format(), g_sceneColorMS->get_sample_count(), g_sceneColorMS->get_usage()});
+            imgs.push_back(g_sceneColorMSView.get());
+            loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+
+            attachments.emplace_back(Attachment{g_sceneDepthMS->get_format(), g_sceneDepthMS->get_sample_count(), g_sceneDepthMS->get_usage()});
+            imgs.push_back(g_sceneDepthMSView.get());
+            loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+        } else {
+            subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+
+            attachments.emplace_back(Attachment{g_sceneDepth->get_format(),g_sceneDepth->get_sample_count(),g_sceneDepth->get_usage()});
+            imgs.push_back(g_sceneDepthView.get());
+            loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+        }
+
+        attachments.emplace_back(Attachment{targetView.get_image().get_format(), targetView.get_image().get_sample_count(), targetView.get_image().get_usage()});
+        imgs.push_back(&targetView);
+        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_STORE});
+
+        auto &renderPass = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
+        auto &frameBuffer = device->get_resource_cache().request_framebuffer(imgs, renderPass);
 
         set_viewport_and_scissor(commandBuffer, get_render_context().get_surface_extent());
-        commandBuffer.begin_render_pass(*GraphicContext::g_offScreenRT, renderPass,frameBuffer, zeroClearValue);
+        commandBuffer.begin_render_pass(extent, renderPass, frameBuffer, zeroClearValue);
 
         MainPass::Draw(context, commandBuffer, m_mainCamera, m_lightCamera, &opaqueNodes, scene.get());
         MainPass::DrawSky(context, commandBuffer, m_mainCamera, m_unitCube);
@@ -378,61 +439,9 @@ void character_render::render(float delta_time) {
         commandBuffer.end_render_pass();
     }
 
-    blit_and_present(commandBuffer);
+    //blit_and_present(commandBuffer);
     commandBuffer.end();
     context.submit(commandBuffer);
-}
-
-void character_render::blit_and_present(vkb::CommandBuffer &commandBuffer) {
-    auto &colorImageView = GraphicContext::g_offScreenRT->get_views()[0];
-    auto &swapChainView = render_context->get_active_frame().get_render_target().get_views()[0];
-
-    ImageMemoryBarrier barrier{};
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.dst_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barrier.new_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    commandBuffer.image_memory_barrier(colorImageView, barrier);
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.src_access_mask = 0;
-    barrier.dst_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.new_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    commandBuffer.image_memory_barrier(swapChainView, barrier);
-
-    VkExtent3D  colorImageExtent = colorImageView.get_image().get_extent();
-    VkExtent3D  swapChainExtent = swapChainView.get_image().get_extent();
-    VkImageBlit blit{};
-    blit.srcOffsets[0] = VkOffset3D{0, 0, 0};
-    blit.srcOffsets[1] = VkOffset3D{(int32_t)colorImageExtent.width, (int32_t)colorImageExtent.height, 0};
-    blit.dstOffsets[0] = VkOffset3D{0, 0, 0};
-    blit.dstOffsets[1] = VkOffset3D{(int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 0};
-    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.srcSubresource.layerCount = 1;
-    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.dstSubresource.layerCount = 1;
-
-    commandBuffer.blit_image(colorImageView.get_image(), swapChainView.get_image(), {blit});
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    barrier.src_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    commandBuffer.image_memory_barrier(colorImageView, barrier);
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    barrier.src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dst_access_mask = 0;
-    barrier.old_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.new_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    commandBuffer.image_memory_barrier(swapChainView, barrier);
 }
 
 void character_render::input_event(const vkb::InputEvent & input_event) {
@@ -452,7 +461,7 @@ void character_render::draw_gui() {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) {
                 m_freeCamera->get_node().get_transform().set_translation({0.0, 6.78, -170.0});
-                m_freeCamera->get_node().get_transform().set_rotation(glm::quat(1.0,0.0,0.0,0.0));
+                m_freeCamera->get_node().get_transform().set_rotation(glm::quat(1.0, 0.0, 0.0, 0.0));
             }
         }
 
@@ -477,7 +486,7 @@ void character_render::draw_gui() {
             glm::quat rotation = glm::toQuat(glm::lookAt(glm::vec3(0.0), lightProperties.direction, up));
             transform.set_rotation(rotation);
             transform.set_translation(shadowCenter - lightProperties.direction * 64.0f);
-            glm::vec2 shadowMapExtent = glm::vec2(GraphicContext::g_shadowImage->get_extent().width, GraphicContext::g_shadowImage->get_extent().height);
+            glm::vec2 shadowMapExtent = glm::vec2(g_shadowImage->get_extent().width, g_shadowImage->get_extent().height);
             m_lightCamera->set_up(lightProperties.direction, shadowCenter, glm::vec3(32, 32, 64), shadowMapExtent, 16);
         }
 
@@ -485,19 +494,19 @@ void character_render::draw_gui() {
         if (ImGui::CollapsingHeader("Render Options")) {
             ImGui::BeginChild("", ImVec2(0, ImGui::GetFontSize() * 4.0f));
             {
-                ImGui::DragFloat3("Shadow Bias", RenderSetting::g_shadowBias, 0.1f, -100.0f, 100.0f);
-                ImGui::DragFloat("Normal Bias", &RenderSetting::g_shadowNormalBias, 0.01f, 0.0f, 10.0f);
-                ImGui::SliderFloat("Roughtness", &RenderSetting::g_roughness, 0.01, 1.0);
-                ImGui::SliderFloat("Metalness", &RenderSetting::g_metalness, 0.01, 1.0);
-                ImGui::Checkbox("Only SSS", &RenderSetting::g_onlySSS);
-                ImGui::Checkbox("Only Shadow", &RenderSetting::g_onlyShadow);
-                ImGui::Checkbox("ScreenSpace SSS", &RenderSetting::g_useScreenSpaceSSS);
-                ImGui::SliderFloat("SSS Level", &RenderSetting::g_sssLevel, 0.0, 1000.0);                
-                ImGui::SliderFloat("SSS Correction", &RenderSetting::g_sssCorrection, 0.0, 10000.0);
-                ImGui::SliderFloat("SSS Max DD", &RenderSetting::g_sssMaxDD, 0.001, 1.0);
-                ImGui::Checkbox("Color Bleed AO", &RenderSetting::g_useColorBleedAO);
-                //ImGui::Checkbox("Double Specular", &RenderSetting::g_useDoubleSpecular);
-                //ImGui::Checkbox("SSAO", &RenderSetting::g_useSSAO);
+                ImGui::DragFloat3("Shadow Bias", g_shadowBias, 0.1f, -100.0f, 100.0f);
+                ImGui::DragFloat("Normal Bias", &g_shadowNormalBias, 0.01f, 0.0f, 10.0f);
+                ImGui::SliderFloat("Roughtness", &g_roughness, 0.01, 1.0);
+                ImGui::SliderFloat("Metalness", &g_metalness, 0.01, 1.0);
+                ImGui::Checkbox("Only SSS", &g_onlySSS);
+                ImGui::Checkbox("Only Shadow", &g_onlyShadow);
+                ImGui::Checkbox("ScreenSpace SSS", &g_useScreenSpaceSSS);
+                ImGui::SliderFloat("SSS Level", &g_sssLevel, 0.0, 1000.0);
+                ImGui::SliderFloat("SSS Correction", &g_sssCorrection, 0.0, 10000.0);
+                ImGui::SliderFloat("SSS Max DD", &g_sssMaxDD, 0.001, 1.0);
+                ImGui::Checkbox("Color Bleed AO", &g_useColorBleedAO);
+                //ImGui::Checkbox("Double Specular", &g_useDoubleSpecular);
+                //ImGui::Checkbox("SSAO", &g_useSSAO);
             }
             ImGui::EndChild();
         }
@@ -506,7 +515,7 @@ void character_render::draw_gui() {
 
 void character_render::finish() {
     VulkanSample::finish();
-    GraphicContext::DestroyGraphicBuffer();
+    DestroyGraphicBuffer();
     GraphicResources::g_shaderSources.clear();
     GraphicResources::g_shaderModules.clear();
 }

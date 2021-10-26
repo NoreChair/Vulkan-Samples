@@ -23,10 +23,10 @@ private:
     virtual void finish() override;
     virtual const std::vector<const char *> get_validation_layers() override;
 
+    void prepare_msaa_mode();
     void prepare_resources();
     void prepare_scene();
     void render(float delta_time);
-    void blit_and_present(vkb::CommandBuffer &commandBuffer);
 
 private:
     const std::string k_title = "Vulkan Example";

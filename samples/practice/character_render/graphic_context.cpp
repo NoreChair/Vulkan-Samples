@@ -3,34 +3,12 @@
 namespace GraphicContext {
 
     const float k_fullScreenTriangle[9] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
-    const float k_unitCubeVertex[]{
-       1.000000, 1.000000, -1.000000,
-       1.000000, -1.000000, -1.000000,
-       1.000000, 1.000000, 1.000000,
-       1.000000, -1.000000, 1.000000,
-       -1.000000, 1.000000, -1.000000,
-       -1.000000, -1.000000, -1.000000,
-       -1.000000, 1.000000, 1.000000,
-       -1.000000, -1.000000, 1.000000
-    };
-    const int k_unitCubeFace[]{
-        5, 3, 1,
-        3, 8, 4,
-        7, 6, 8,
-        2, 8, 6,
-        1, 4, 2,
-        5, 2, 6,
-        5, 7, 3,
-        3, 7, 8,
-        7, 5, 6,
-        2, 4, 8,
-        1, 3, 4,
-        5, 1, 2,
-    };
 
-    std::unique_ptr<vkb::RenderTarget> g_offScreenRT{nullptr};
     std::unique_ptr<vkb::RenderTarget> g_shadowImage{nullptr};
 
+    std::unique_ptr<vkb::core::Image> g_sceneDepth{nullptr};
+    std::unique_ptr<vkb::core::Image> g_sceneColorMS{nullptr};
+     std::unique_ptr<vkb::core::Image> g_sceneDepthMS{nullptr};
     std::unique_ptr<vkb::core::Image> g_characterSSS{nullptr};
     std::unique_ptr<vkb::core::Image> g_linearDepth{nullptr};
     std::unique_ptr<vkb::core::Image> g_characterDepthStencil{nullptr};
@@ -38,6 +16,9 @@ namespace GraphicContext {
     std::unique_ptr<vkb::core::Image> g_transientBlurH{nullptr};
     std::unique_ptr<vkb::core::Image> g_transientBlurV{nullptr};
 
+    std::unique_ptr<vkb::core::ImageView> g_sceneDepthView{nullptr};
+    std::unique_ptr<vkb::core::ImageView> g_sceneColorMSView{nullptr};
+    std::unique_ptr<vkb::core::ImageView> g_sceneDepthMSView{nullptr};
     std::unique_ptr<vkb::core::ImageView> g_characterSSSView{nullptr};
     std::unique_ptr<vkb::core::ImageView> g_characterDepthStencilView{nullptr};
 
@@ -63,20 +44,26 @@ namespace GraphicContext {
         VkImageUsageFlags storageFlag = VK_IMAGE_USAGE_STORAGE_BIT;
         VkImageUsageFlags transientDepthFlag = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
         VkImageUsageFlags transientDepthInOutFlag = transientDepthFlag | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+        VkImageUsageFlags transientColorFlag = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
         VkImageUsageFlags shadowMapFlag = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
         VmaMemoryUsage transientMemory = VMA_MEMORY_USAGE_GPU_LAZILY_ALLOCATED;
 #ifndef VK_USE_PLATFORM_ANDROID_KHR
         transientMemory = VMA_MEMORY_USAGE_GPU_ONLY;
 #endif
-        vkb::core::Image colorImage(device, fullSize, colorFormat, outputAndShaderFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-        vkb::core::Image depthImage(device, fullSize, depthStencilFormat, transientDepthFlag, transientMemory);
+
+        if (RenderSetting::g_multiSampleCount != VK_SAMPLE_COUNT_1_BIT) {
+            g_sceneColorMS = std::make_unique<vkb::core::Image>(device, fullSize, colorFormat, transientColorFlag, transientMemory, RenderSetting::g_multiSampleCount);
+            g_sceneColorMSView = std::make_unique<vkb::core::ImageView>(*g_sceneColorMS, VK_IMAGE_VIEW_TYPE_2D);
+
+            g_sceneDepthMS = std::make_unique<vkb::core::Image>(device, fullSize, depthStencilFormat, transientDepthFlag, transientMemory, RenderSetting::g_multiSampleCount);
+            g_sceneDepthMSView = std::make_unique<vkb::core::ImageView>(*g_sceneDepthMS, VK_IMAGE_VIEW_TYPE_2D);
+        } else {
+            g_sceneDepth = std::make_unique<vkb::core::Image>(device, fullSize, depthStencilFormat, transientDepthFlag, transientMemory);
+            g_sceneDepthView = std::make_unique<vkb::core::ImageView>(*g_sceneDepth, VK_IMAGE_VIEW_TYPE_2D);
+        }
 
         std::vector<vkb::core::Image> imgs; 
-        imgs.emplace_back(std::move(colorImage));
-        imgs.emplace_back(std::move(depthImage));
-        g_offScreenRT = std::make_unique<vkb::RenderTarget>(std::move(imgs));
-
         imgs.clear();
         vkb::core::Image shadowImage(device, shadowSize, VK_FORMAT_D32_SFLOAT, shadowMapFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         imgs.push_back(std::move(shadowImage));
@@ -128,20 +115,23 @@ namespace GraphicContext {
     }
 
     void DestroyGraphicBuffer() {
-        g_offScreenRT.reset();
         g_shadowImage.reset();
 
+        g_sceneDepthView.reset();
+        g_sceneColorMSView.reset();
+        g_sceneDepthMSView.reset();
         g_linearDepthView.reset();
+        g_characterSSSView.reset();
+        g_characterDepthStencilView.reset();
         g_transientBlurHView.reset();
         g_transientBlurVView.reset();
 
-        g_characterSSSView.reset();
-        g_characterDepthStencilView.reset();
-
+        g_sceneDepth.reset();
+        g_sceneColorMS.reset();
+        g_sceneDepthMS.reset();
         g_characterSSS.reset();
         g_characterDepthStencil.reset();
         g_linearDepth.reset();
-
         g_transientBlurH.reset();
         g_transientBlurV.reset();
 
@@ -173,8 +163,11 @@ namespace RenderSetting {
     bool g_useColorBleedAO{true};
     bool g_useDoubleSpecular{false};
     bool g_useSSAO{false};
+    bool g_depthResolveSupported{false};
+    VkSampleCountFlagBits g_multiSampleCount{VK_SAMPLE_COUNT_1_BIT};
+    VkResolveModeFlagBits g_depthResolveMode{VK_RESOLVE_MODE_NONE};
 
-    void Init() {
+    void InitRenderSetting() {
         g_shadowBias[0] = 0.0f; g_shadowBias[1] = 0.0f; g_shadowBias[2] = 3.0f;
         g_shadowNormalBias = 0.2f;
         g_roughness = 0.45f;

@@ -12,16 +12,20 @@ namespace MainPass {
     void Init(vkb::Device& device) {
         ColorBlendState           defaultColorState;
         ColorBlendAttachmentState defaultAttaState;
+        MultisampleState          multiSampleState;
+        multiSampleState.rasterization_samples = RenderSetting::g_multiSampleCount;
         defaultColorState.attachments.push_back(defaultAttaState);
         pipelineState.set_color_blend_state(defaultColorState);
+        pipelineState.set_multisample_state(multiSampleState);
 
-        RasterizationState rs;
-        rs.cull_mode = VK_CULL_MODE_NONE;
-        skyPipelineState.set_rasterization_state(rs);
-        DepthStencilState ds;
-        ds.depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
-        skyPipelineState.set_depth_stencil_state(ds);
+        RasterizationState rasterizationState;
+        rasterizationState.cull_mode = VK_CULL_MODE_FRONT_BIT;
+        DepthStencilState depthState;
+        depthState.depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
+        skyPipelineState.set_rasterization_state(rasterizationState);
+        skyPipelineState.set_depth_stencil_state(depthState);
         skyPipelineState.set_color_blend_state(defaultColorState);
+        skyPipelineState.set_multisample_state(multiSampleState);
 
         std::vector<vkb::ShaderModule*> moudles;
         moudles.push_back(GraphicResources::g_shaderModules.find("character.vert")->second);
