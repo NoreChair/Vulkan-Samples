@@ -330,7 +330,7 @@ void RenderPass::create_renderpass(const std::vector<Attachment> &attachments, c
 			auto it = find_if(attachments.begin(), attachments.end(), [](const Attachment attachment) { return is_depth_stencil_format(attachment.format); });
 			if (it != attachments.end())
 			{
-				auto i_depth_stencil = vkb::to_u32(std::distance(attachments.begin(), it));
+				auto i_depth_stencil = subpass.depth_stencil_attachment < 0 ? vkb::to_u32(std::distance(attachments.begin(), it)) : (uint32_t)subpass.depth_stencil_attachment;
 				auto initial_layout  = it->initial_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : it->initial_layout;
 				depth_stencil_attachments[i].push_back(get_attachment_reference<T_AttachmentReference>(i_depth_stencil, initial_layout));
 

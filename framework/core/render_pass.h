@@ -38,6 +38,8 @@ struct SubpassInfo
 	uint32_t depth_stencil_resolve_attachment;
 
 	VkResolveModeFlagBits depth_stencil_resolve_mode;
+
+    int depth_stencil_attachment{-1};
 };
 
 class RenderPass
