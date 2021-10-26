@@ -12,5 +12,5 @@ layout(set = 0, binding = 0) uniform GlobalUniform{
 void main(){
     v_pos = position;
     gl_Position = viewProj * vec4(position, 1.0);
-    gl_Position.z = 0.0001;
+    gl_Position.z = 1e-10;
 }
