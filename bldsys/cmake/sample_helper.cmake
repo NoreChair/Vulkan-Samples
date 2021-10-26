@@ -174,10 +174,18 @@ function(add_sample_with_tags)
 
     list(APPEND TARGET_TAGS "any")
 
+    FILE(GLOB_RECURSE ALL_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cpp" "*.c")
+    FILE(GLOB_RECURSE ALL_INCLUDES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.hpp" "*.h")
     set(SRC_FILES
-        ${TARGET_ID}.h
-        ${TARGET_ID}.cpp
+        ${ALL_INCLUDES}
+        ${ALL_SOURCES}
     )
+
+    # set(SRC_FILES
+    #     ${TARGET_ID}.h
+    #     ${TARGET_ID}.cpp
+    # )
+
 
     # Append extra files if present
     if (TARGET_FILES)
