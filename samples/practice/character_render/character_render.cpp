@@ -15,7 +15,6 @@
 
 #include "graphic_context.h"
 #include "shadow_pass.h"
-#include "ssao.h"
 #include "main_pass.h"
 #include "subsurface_pass.h"
 
@@ -322,7 +321,7 @@ void character_render::render(float delta_time) {
     auto& targetView = const_cast<core::ImageView&>(render_context->get_active_frame().get_render_target().get_views()[0]);
 
     ImageMemoryBarrier barrier{};
-  
+
     // shadow pass
     {
         barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -399,7 +398,7 @@ void character_render::render(float delta_time) {
         std::vector<Attachment> attachments;
         std::vector<vkb::core::ImageView*> imgs;
         std::vector<LoadStoreInfo> loadStoreInfos;
-      
+
         if (msaaEnable) {
             subPassInfos.emplace_back(SubpassInfo{{}, {0}, {2}, false, 0, VK_RESOLVE_MODE_NONE});
 
@@ -411,7 +410,7 @@ void character_render::render(float delta_time) {
             imgs.push_back(g_sceneDepthMSView.get());
             loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
         } else {
-            subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+            subPassInfos.emplace_back(SubpassInfo{{}, {1}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
             attachments.emplace_back(Attachment{g_sceneDepth->get_format(),g_sceneDepth->get_sample_count(),g_sceneDepth->get_usage()});
             imgs.push_back(g_sceneDepthView.get());
@@ -494,19 +493,18 @@ void character_render::draw_gui() {
         if (ImGui::CollapsingHeader("Render Options")) {
             ImGui::BeginChild("", ImVec2(0, ImGui::GetFontSize() * 4.0f));
             {
+                ImGui::Checkbox("Only SSS", &g_onlySSS);  ImGui::SameLine();
+                ImGui::Checkbox("Only Shadow", &g_onlyShadow);
+                ImGui::Checkbox("ScreenSpace SSS", &g_useScreenSpaceSSS);  ImGui::SameLine();
+                ImGui::Checkbox("Color Bleed AO", &g_useColorBleedAO);  ImGui::SameLine();
+                ImGui::Checkbox("Double Specular", &g_useDoubleSpecular);
                 ImGui::DragFloat3("Shadow Bias", g_shadowBias, 0.1f, -100.0f, 100.0f);
                 ImGui::DragFloat("Normal Bias", &g_shadowNormalBias, 0.01f, 0.0f, 10.0f);
                 ImGui::SliderFloat("Roughtness", &g_roughness, 0.01, 1.0);
                 ImGui::SliderFloat("Metalness", &g_metalness, 0.01, 1.0);
-                ImGui::Checkbox("Only SSS", &g_onlySSS);
-                ImGui::Checkbox("Only Shadow", &g_onlyShadow);
-                ImGui::Checkbox("ScreenSpace SSS", &g_useScreenSpaceSSS);
                 ImGui::SliderFloat("SSS Level", &g_sssLevel, 0.0, 1000.0);
                 ImGui::SliderFloat("SSS Correction", &g_sssCorrection, 0.0, 10000.0);
                 ImGui::SliderFloat("SSS Max DD", &g_sssMaxDD, 0.001, 1.0);
-                ImGui::Checkbox("Color Bleed AO", &g_useColorBleedAO);
-                //ImGui::Checkbox("Double Specular", &g_useDoubleSpecular);
-                //ImGui::Checkbox("SSAO", &g_useSSAO);
             }
             ImGui::EndChild();
         }

@@ -82,7 +82,7 @@ namespace MainPass {
         auto globalUniform = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
         globalUniform.update(global);
         commandBuffer.bind_buffer(globalUniform.get_buffer(), globalUniform.get_offset(), globalUniform.get_size(), 0, 0, 0);
-        
+
         commandBuffer.bind_image(*g_sceneTextures[Albedo], *GraphicContext::g_linearClampSampler, 0, 2, 0);
         commandBuffer.bind_image(*g_sceneTextures[Normal], *GraphicContext::g_linearClampSampler, 0, 3, 0);
         commandBuffer.bind_image(*g_sceneTextures[Occlusion], *GraphicContext::g_linearClampSampler, 0, 4, 0);

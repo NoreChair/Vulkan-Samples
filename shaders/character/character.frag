@@ -146,6 +146,14 @@ float smith_ggx_height_correlated_hammon_approximate_visibility(float ndotv, flo
     return 0.0;
 }
 
+vec2 smith_ggx_height_correlated_hammon_approximate_visibility(float ndotv, float ndotl, vec2 roughness){
+    float a = 2.0 * ndotl * ndotv;
+    float b = ndotl + ndotv;
+    vec2 GGX = mix(vec2(a), vec2(b), roughness);
+    vec2 s = step(vec2(1e-5), GGX) * vec2(0.5);
+    return s / max(GGX, vec2(1e-5));
+}
+
 // RTR4 - equation 9.41
 float ggx_ndf(float ndoth, float roughness)
 {
@@ -154,13 +162,27 @@ float ggx_ndf(float ndoth, float roughness)
 	return alphaRoughnessSq / (3.14159265358979 * f * f);
 }
 
+vec2 ggx_ndf(float ndoth, vec2 roughness)
+{
+	vec2 alphaRoughnessSq = roughness * roughness;
+	vec2 f = (ndoth * alphaRoughnessSq - ndoth) * ndoth + 1.0;
+	return alphaRoughnessSq / (3.14159265358979 * f * f);
+}
+
 vec3 ggx_specular_brdf(float ndotl, float ndotv, float ndoth, float hdotl, float vdoth, float roughness, vec3 specularColor){
     vec3 directSpecular = vec3(0.0, 0.0, 0.0);
 
-    vec3  f   = schlick_fresnel(hdotl, specularColor, vec3(1.0));
-    float vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, roughness);
-    float d   = ggx_ndf(ndoth, roughness);
-    return f * d * vis;
+    vec3 f = schlick_fresnel(hdotl, specularColor, vec3(1.0));
+    if(useDoubleSpecular > 0u){
+        float secondRoughness = saturate(log2(roughness) / 8.0 + 1.0);
+        vec2 vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, vec2(roughness, secondRoughness));
+        vec2 d   = ggx_ndf(ndoth, vec2(roughness, secondRoughness));
+        return mix(f * d.x * vis.x, f * d.y * vis.y, 0.15);
+    }else{
+        float vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, roughness);
+        float d   = ggx_ndf(ndoth, roughness);
+        return f * d * vis;
+    }
 }
 
 /*----------------------------Shadow----------------------------*/
@@ -365,6 +387,10 @@ vec3 reoriented_normal_mapping(vec3 base, vec3 detail){
     return r;
 }
 
+float to_luminance(vec3 color){
+    return dot(vec3(0.2126, 0.7152, 0.0722), color);
+}
+
 vec3 get_normal()
 {
 	vec3 pos_dx = dFdx(v_posWS);
@@ -383,12 +409,6 @@ vec3 get_normal()
 }
 
 void main(){
-
-    if(onlySSS > 0u){
-        o_color = texture(sssTexture, v_uvNDC) * lightDirIntensity.w;
-        return;
-    }
-
     const float k_pi = 3.14159265358979;
     vec3 normal = get_normal();
     vec3 view = normalize(cameraPosWS.xyz - v_posWS.xyz);
@@ -400,6 +420,11 @@ void main(){
     float ndoth = saturate(dot(normal, halfVector));
     float hdotl = saturate(dot(halfVector, light));
     float vdoth = saturate(dot(view, halfVector));
+
+    if(onlySSS > 0u){
+        o_color = texture(sssTexture, v_uvNDC) * lightDirIntensity.w * ndotl;
+        return;
+    }
 
     vec4 albedo = texture(baseColorTexture, v_uv);
     vec3 params = texture(paramsTexture, v_uv).xyz;
@@ -414,7 +439,9 @@ void main(){
     vec3 surfaceColor = albedo.rgb; // instread of metal f0
     vec3 f0 = mix(vec3(0.028), surfaceColor, metalness);
     if(useSSS > 0u){
-        diffuse = texture(sssTexture, v_uvNDC).rgb;
+        // hack 
+        float sssFactor = step(0.07, to_luminance(albedo.rgb)); 
+        diffuse = mix(diffuse, texture(sssTexture, v_uvNDC).rgb, vec3(sssFactor));
     }
     // approximate : diffuse = diffuse * (vec3(1.0) - f0) * (1.0 - metalness);
     diffuse = diffuse * (vec3(1.0) - schlick_fresnel(hdotl, f0, vec3(1.0))) * (1.0 - metalness);

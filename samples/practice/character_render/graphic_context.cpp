@@ -29,7 +29,7 @@ namespace GraphicContext {
     std::unique_ptr<vkb::core::Sampler> g_linearClampSampler{nullptr};
     std::unique_ptr<vkb::core::Sampler> g_pointClampSampler{nullptr};
     std::unique_ptr<vkb::core::Sampler> g_shadowSampler{nullptr};
-    
+
     std::unique_ptr<vkb::core::Buffer> g_fullScreenTriangle;
 
     void InitGraphicBuffer(vkb::Device& device, uint32_t width, uint32_t height) {
@@ -63,7 +63,7 @@ namespace GraphicContext {
             g_sceneDepthView = std::make_unique<vkb::core::ImageView>(*g_sceneDepth, VK_IMAGE_VIEW_TYPE_2D);
         }
 
-        std::vector<vkb::core::Image> imgs; 
+        std::vector<vkb::core::Image> imgs;
         imgs.clear();
         vkb::core::Image shadowImage(device, shadowSize, VK_FORMAT_D32_SFLOAT, shadowMapFlag, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         imgs.push_back(std::move(shadowImage));
@@ -106,7 +106,7 @@ namespace GraphicContext {
         g_pointClampSampler = std::make_unique<vkb::core::Sampler>(device, samplerCreateInfo);
 
         g_fullScreenTriangle = std::make_unique<vkb::core::Buffer>(device, sizeof(k_fullScreenTriangle), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
-        g_fullScreenTriangle->update((void*)k_fullScreenTriangle, sizeof(k_fullScreenTriangle));  
+        g_fullScreenTriangle->update((void*)k_fullScreenTriangle, sizeof(k_fullScreenTriangle));
     }
 
     void ResizeGraphicBuffer(vkb::Device& device, uint32_t width, uint32_t height) {
@@ -161,7 +161,7 @@ namespace RenderSetting {
     bool g_onlyShadow{false};
     bool g_useScreenSpaceSSS{true};
     bool g_useColorBleedAO{true};
-    bool g_useDoubleSpecular{false};
+    bool g_useDoubleSpecular{true};
     bool g_useSSAO{false};
     bool g_depthResolveSupported{false};
     VkSampleCountFlagBits g_multiSampleCount{VK_SAMPLE_COUNT_1_BIT};

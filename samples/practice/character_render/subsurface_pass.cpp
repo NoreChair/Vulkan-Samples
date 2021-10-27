@@ -43,7 +43,7 @@ namespace SubsurfacePass {
     class SkinGaussianSum : public std::vector<Gaussian> {
     public:
         SkinGaussianSum() {
-            // We use the unblurred image as an aproximation to the first 
+            // We use the unblurred image as an aproximation to the first
             // gaussian because it is too narrow to be noticeable. The weight
             // of the unblurred image is the first one.
             glm::vec3 weights[] = {
@@ -170,20 +170,11 @@ namespace SubsurfacePass {
         moudles.push_back(GraphicResources::g_shaderModules.find("sss_blur_accum.frag")->second);
         blurAccumLayout = &device.get_resource_cache().request_pipeline_layout(moudles);
     }
-    
+
     void DrawDiffuse(RenderContext& context, CommandBuffer& commandBuffer, sg::Camera* camera, RenderUtils::SortedMeshes *submeshs, sg::Scene* scene) {
         RenderUtils::BindPipelineState(commandBuffer, irradiancePipeline);
 
-        const auto& images = scene->get_components<sg::Image>();
-        sg::Image* color{nullptr};
-        for (int i = 0; i < images.size(); ++i) {
-            if (images.at(i)->get_name() == "T_Color.png") {
-                color = images.at(i);
-            }
-            if (color) {
-                break;
-            }
-        }
+        const auto color = GraphicResources::g_sceneTextures[GraphicResources::Albedo];
 
         sg::Light* mainLight = scene->get_components<sg::Light>()[0];
         auto &render_frame = context.get_active_frame();
@@ -203,7 +194,7 @@ namespace SubsurfacePass {
         auto globalUniform = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
         globalUniform.update(global);
         commandBuffer.bind_buffer(globalUniform.get_buffer(), globalUniform.get_offset(), globalUniform.get_size(), 0, 0, 0);
-        commandBuffer.bind_image(color->get_vk_image_view(), *g_linearClampSampler, 0, 2, 0);
+        commandBuffer.bind_image(*color, *g_linearClampSampler, 0, 2, 0);
 
         for (auto iter = submeshs->begin(); iter != submeshs->end(); iter++) {
             auto node = iter->second.first;
@@ -331,7 +322,7 @@ namespace SubsurfacePass {
         barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         commandBuffer.image_memory_barrier(*g_transientBlurHView, barrier);
 
-        // vertical and accumulate 
+        // vertical and accumulate
         {
             std::vector<LoadStoreInfo> loadStoreInfos;
             loadStoreInfos.emplace_back(LoadStoreInfo{loadOp, VK_ATTACHMENT_STORE_OP_STORE});
