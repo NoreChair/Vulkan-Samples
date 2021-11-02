@@ -23,7 +23,7 @@ add_sample_with_tags(
     ID ${FOLDER_NAME}
     CATEGORY ${CATEGORY_NAME}
     AUTHOR "Nore"
-    NAME "forward_plus"
-    DESCRIPTION "forward plus rendering."
+    NAME "GPU_OC"
+    DESCRIPTION "Using Gpu to query mesh occlusion"
     TAGS
-        "practice")
+        "Nore")

@@ -87,8 +87,7 @@ set(ORDER_LIST
     "16bit_arithmetic"
 
    #Pratice Samples
-    "forward_plus"
-	"character_render")
+    "GPU_OC")
 
 
 # Orders the sample ids by the order list above
