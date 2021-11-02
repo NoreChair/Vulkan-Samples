@@ -35,7 +35,7 @@ bool ShaderProgram::IsComputeProgram()
 	return (programStageFlag & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
 }
 
-size_t ShaderProgram::AddShaderProgram(std::string &name, std::shared_ptr<ShaderProgram> &&program)
+size_t ShaderProgram::AddShaderProgram(std::string name, std::shared_ptr<ShaderProgram> &&program)
 {
 	size_t uid = std::hash<std::string>{}(name);
 	AddShaderProgram(uid, std::move(program));
@@ -57,7 +57,7 @@ void ShaderProgram::RemoveShaderProgram(size_t uid)
 	}
 }
 
-ShaderProgram *ShaderProgram::Find(std::string &name)
+ShaderProgram *ShaderProgram::Find(std::string name)
 {
 	size_t uid  = std::hash<std::string>{}(name);
 	auto   iter = shaderProgramPool.find(uid);
@@ -88,7 +88,7 @@ vkb::ShaderSource &ShaderProgram::FindShaderSource(size_t uid)
 	throw std::runtime_error("Can't find shader with UID : " + uid);
 }
 
-vkb::ShaderSource &ShaderProgram::FindShaderSource(std::string &name)
+vkb::ShaderSource &ShaderProgram::FindShaderSource(std::string name)
 {
 	size_t uid  = std::hash<std::string>{}(name);
 	auto   iter = shaderSourcePool.find(uid);

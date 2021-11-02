@@ -52,7 +52,7 @@ bool character_render::prepare(vkb::Platform & platform) {
     }
 
     prepare_msaa_mode();
-    auto& extent = get_render_context().get_surface_extent();
+    const auto& extent = get_render_context().get_surface_extent();
     InitGraphicBuffer(get_device(), extent.width, extent.height);
     InitRenderSetting();
     prepare_resources();
@@ -84,7 +84,7 @@ void character_render::prepare_msaa_mode() {
         properties.pNext = static_cast<void *>(&resolveProperties);
         vkGetPhysicalDeviceProperties2KHR(get_device().get_gpu().get_handle(), &properties);
 
-        g_multiSampleCount = (properties.properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0? VK_SAMPLE_COUNT_4_BIT: VK_SAMPLE_COUNT_1_BIT;
+        //g_multiSampleCount = (properties.properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0? VK_SAMPLE_COUNT_4_BIT: VK_SAMPLE_COUNT_1_BIT;
 
         if (resolveProperties.supportedDepthResolveModes == 0) {
             LOGW("No depth stencil resolve modes supported");
@@ -104,7 +104,7 @@ void character_render::prepare_msaa_mode() {
     } else {
         VkPhysicalDeviceProperties properties{};
         vkGetPhysicalDeviceProperties(get_device().get_gpu().get_handle(), &properties);
-        g_multiSampleCount = (properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0 ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
+        //g_multiSampleCount = (properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0 ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
     }
 }
 
@@ -254,7 +254,7 @@ void character_render::prepare_scene() {
     m_mainCamera->set_near_plane(0.01f);
     m_mainCamera->get_node()->get_transform().set_translation({0.0, 6.78, -170.0});
 
-    auto& lights = scene->get_components<sg::Light>();
+    const auto& lights = scene->get_components<sg::Light>();
     auto  iter = std::find_if(lights.begin(), lights.end(), [](sg::Light *iter) -> bool { return iter->get_light_type() == sg::LightType::Directional; });
     assert(iter != lights.end());
 
@@ -466,7 +466,7 @@ void character_render::draw_gui() {
 
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Light Options")) {
-            auto& lights = scene->get_components<sg::Light>();
+            const auto& lights = scene->get_components<sg::Light>();
             auto lightProperties(lights[0]->get_properties());
             ImGui::DragFloat3("Direction", &lightProperties.direction.r, 0.01, -1.0f, 1.0f);
             ImGui::SameLine();

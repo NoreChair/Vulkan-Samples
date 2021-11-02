@@ -17,9 +17,8 @@
 #include "RenderPass/opaque_pass.h"
 #include "RenderPass/screen_shadow_pass.h"
 #include "RenderPass/show_depth_pass.h"
-
-class vkb::sg::Node;
-class vkb::sg::SubMesh;
+#include "scene_graph/node.h"
+#include "scene_graph/components/sub_mesh.h"
 
 class forward_plus : public vkb::VulkanSample
 {

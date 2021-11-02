@@ -71,11 +71,11 @@ void debug_draw_pass::draw(vkb::CommandBuffer &command_buffer)
 
 	std::vector<std::reference_wrapper<const core::Buffer>> buffers;
 
-	auto &instance_buffer = render_context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof(instance_attribute) * count);
+	auto instance_buffer = render_context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof(instance_attribute) * count);
 	instance_buffer.update((uint8_t *) bounding_cube.data(), sizeof(instance_attribute) * cube_count, 0);
 	instance_buffer.update((uint8_t *) bounding_sphere.data(), sizeof(instance_attribute) * sphere_count, sizeof(instance_attribute) * cube_count);
 
-	BufferAllocation &uniform_buffer = render_context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(glm::mat4));
+	BufferAllocation uniform_buffer = render_context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(glm::mat4));
 	uniform_buffer.update(vkb::vulkan_style_projection(render_camera->get_projection()) * render_camera->get_view());
 	command_buffer.bind_buffer(uniform_buffer.get_buffer(), uniform_buffer.get_offset(), uniform_buffer.get_size(), 0, 0, 0);
 

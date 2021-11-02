@@ -6,8 +6,6 @@
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/mesh.h"
 #include "scene_graph/components/pbr_material.h"
-#include "scene_graph/components/sub_mesh.h"
-#include "scene_graph/node.h"
 
 using namespace vkb;
 using namespace vkb::core;
@@ -83,7 +81,7 @@ void forward_plus::resize(const uint32_t width, const uint32_t height)
 void forward_plus::prepare_buffer()
 {
 	Device &refDevice = *device.get();
-	auto &  extent2d  = get_render_context().get_surface_extent();
+	auto    extent2d  = get_render_context().get_surface_extent();
 	int     tileCount = (int) (glm::ceil(extent2d.height / 16.0f) * glm::ceil(extent2d.width / 16.0f));
 
 	lightBuffer     = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -190,7 +188,7 @@ void forward_plus::prepare_light()
 void forward_plus::prepare_pipelines()
 {
 	Device & refDevice    = *device.get();
-	auto &   extent2d     = get_render_context().get_surface_extent();
+	auto     extent2d     = get_render_context().get_surface_extent();
 	uint32_t windowWidth  = extent2d.width;
 	uint32_t windowHeight = extent2d.height;
 
@@ -335,7 +333,7 @@ void forward_plus::prepare_scene()
 	load_scene("scenes/sponza/Sponza01.gltf");
 
 	auto                   sceneAABB = std::make_unique<sg::AABB>();
-	auto &                 meshs     = scene->get_components<sg::Mesh>();
+	const auto &           meshs     = scene->get_components<sg::Mesh>();
 	std::vector<glm::vec3> center;
 	std::vector<glm::vec3> extent;
 	for (size_t i = 0; i < meshs.size(); i++)
@@ -369,7 +367,7 @@ void forward_plus::prepare_scene()
 	camera->set_far_plane(10000.0f);
 	camera->set_near_plane(0.01f);
 
-	auto &lights       = scene->get_components<sg::Light>();
+	const auto &lights       = scene->get_components<sg::Light>();
 	auto  direct_light = std::find_if(lights.begin(), lights.end(), [](sg::Light *iter) -> bool { return iter->get_light_type() == sg::LightType::Directional; });
 	DEBUG_ASSERT(direct_light != lights.end(), "Direction light missing");
 

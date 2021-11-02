@@ -8,7 +8,7 @@ namespace GraphicContext {
 
     std::unique_ptr<vkb::core::Image> g_sceneDepth{nullptr};
     std::unique_ptr<vkb::core::Image> g_sceneColorMS{nullptr};
-     std::unique_ptr<vkb::core::Image> g_sceneDepthMS{nullptr};
+    std::unique_ptr<vkb::core::Image> g_sceneDepthMS{nullptr};
     std::unique_ptr<vkb::core::Image> g_characterSSS{nullptr};
     std::unique_ptr<vkb::core::Image> g_linearDepth{nullptr};
     std::unique_ptr<vkb::core::Image> g_characterDepthStencil{nullptr};

@@ -19,19 +19,19 @@ class ShaderProgram
 
 	bool IsComputeProgram();
 
-	static size_t AddShaderProgram(std::string &name, std::shared_ptr<ShaderProgram> &&program);
+	static size_t AddShaderProgram(std::string name, std::shared_ptr<ShaderProgram> &&program);
 
 	static void AddShaderProgram(size_t uid, std::shared_ptr<ShaderProgram> &&program);
 
 	static void RemoveShaderProgram(size_t uid);
 
-	static ShaderProgram *Find(std::string &name);
+	static ShaderProgram *Find(std::string name);
 
 	static ShaderProgram *Find(size_t uid);
 
 	static vkb::ShaderSource &FindShaderSource(size_t uid);
 
-	static vkb::ShaderSource &FindShaderSource(std::string &name);
+	static vkb::ShaderSource &FindShaderSource(std::string name);
 
 	static size_t AddShaderSource(vkb::ShaderSource &&shaderSource);
 
