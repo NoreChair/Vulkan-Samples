@@ -95,7 +95,7 @@ void gpu_occlusion::finish() {
 }
 
 void gpu_occlusion::prepare_resources() {
-    const std::string scenePath = "rocks/Terrain.gltf";
+    const std::string scenePath = "rocks/GameObject.gltf";
     GLTFLoader loader{*device};
     scene = loader.read_scene_from_file(scenePath);
 
@@ -171,8 +171,7 @@ void gpu_occlusion::prepare_scene() {
         for (auto node : mesh->get_nodes()) {
             auto& bounds = node->get_component<vkb::sg::Mesh>().get_bounds();
             auto worldBound = std::make_unique<vkb::sg::AABB>(bounds.get_min(), bounds.get_max());
-            glm::mat4 worldMatrix = glm::scale(node->get_transform().get_scale());
-            worldBound->transform(worldMatrix);
+            worldBound->transform(node->get_transform().get_world_matrix());
             node->set_component(*worldBound);
             scene->add_component(std::move(worldBound));
         }
@@ -207,7 +206,7 @@ void gpu_occlusion::render(float delta_time) {
     m_timer.start();
 
     glm::vec4 frustum[6];
-    RenderUtils::ExtractPlanes(m_mainCamera->get_projection() * m_mainCamera->get_view(), frustum);
+    RenderUtils::ExtractPlanes(vulkan_style_projection(m_mainCamera->get_projection()) * m_mainCamera->get_view(), frustum);
 
     RenderUtils::SortedMeshes opaqueNodes;
     RenderUtils::SortedMeshes transparentNodes;
@@ -225,7 +224,6 @@ void gpu_occlusion::render(float delta_time) {
             nodeCount++;
             const auto& aabb = node->get_component<sg::AABB>();
             if (RenderUtils::FrustumAABB(frustum, aabb.get_min(), aabb.get_max())) {
-                boundingBoxs.emplace_back(std::ref(aabb));
                 glm::vec3 delta = aabb.get_center() - mainCameraRTS.get_world_translation();
                 float     distance = glm::dot(cameraForward, delta);
 
@@ -235,6 +233,7 @@ void gpu_occlusion::render(float delta_time) {
                     } else if (sub_mesh->get_material()->alpha_mode == vkb::sg::AlphaMode::Mask) {
                         cullOffNodes.emplace(distance, std::make_pair(node, sub_mesh));
                     } else {
+                        boundingBoxs.emplace_back(std::ref(aabb));
                         opaqueNodes.emplace(distance, std::make_pair(node, sub_mesh));
                     }
                 }

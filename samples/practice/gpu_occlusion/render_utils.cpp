@@ -219,6 +219,7 @@ namespace RenderUtils {
     }
 
     void ExtractPlanes(glm::mat4 view_project, glm::vec4* planes) {
+        view_project = glm::transpose(view_project);
         planes[0] = view_project[3] + view_project[0];
         planes[1] = view_project[3] - view_project[0];
         planes[2] = view_project[3] + view_project[1];
@@ -232,11 +233,37 @@ namespace RenderUtils {
     }
 
     bool FrustumAABB(const glm::vec4 planes[6], glm::vec3 min, glm::vec3 max) {
+        //glm::vec4 center = glm::vec4((min + max) * 0.5f, 1.0f);
+        //glm::vec3 extent = (max - min) * 0.5f;
+        //for (uint32_t i = 0; i < 6; i++) {
+        //    glm::vec3 normal = glm::vec3(planes[i].xyz);
+        //    float e = glm::dot(normal, extent);
+        //    if (glm::dot(planes[i], center) + e < 0.0f) {
+        //        return false;
+        //    }
+        //}
+        //return true;
+
+        //for (int i = 0; i < 6; i++) {
+        //    int out = 0;
+        //    out += ((glm::dot(planes[i], glm::vec4(min.x, min.y, min.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(max.x, min.y, min.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(min.x, max.y, min.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(max.x, max.y, min.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(min.x, min.y, max.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(max.x, min.y, max.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(min.x, max.y, max.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    out += ((glm::dot(planes[i], glm::vec4(max.x, max.y, max.z, 1.0f)) < 0.0) ? 1 : 0);
+        //    if (out == 8) return false;
+        //}
+
+        //return true;
+
         glm::vec4 center = glm::vec4((min + max) * 0.5f, 1.0f);
-        glm::vec3 height = (max - min) * 0.5f;
-        for (uint32_t i = 0; i < 6; i++) {
-            float e = glm::dot(glm::vec3(planes[i].xyz), height * glm::sign(glm::vec3(planes[i].xyz)));
-            if (glm::dot(planes[i], center) + e < 0.0f) {
+        glm::vec3 extent = (max - min) * 0.5f;
+        float radius = glm::max(glm::max(extent.x, extent.y), extent.z);
+        for (int i = 0; i < 6; i++) {
+            if (glm::dot(center, planes[i]) + radius < 0.0) {
                 return false;
             }
         }
