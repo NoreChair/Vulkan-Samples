@@ -175,12 +175,12 @@ vec3 ggx_specular_brdf(float ndotl, float ndotv, float ndoth, float hdotl, float
     vec3 f = schlick_fresnel(hdotl, specularColor, vec3(1.0));
     if(useDoubleSpecular > 0u){
         float secondRoughness = saturate(log2(roughness) / 8.0 + 1.0);
-        vec2 vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, vec2(roughness, secondRoughness));
-        vec2 d   = ggx_ndf(ndoth, vec2(roughness, secondRoughness));
+        vec2 vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, vec2(roughness * roughness, secondRoughness * secondRoughness));
+        vec2 d   = ggx_ndf(ndoth, vec2(roughness * roughness, secondRoughness * secondRoughness));
         return mix(f * d.x * vis.x, f * d.y * vis.y, 0.15);
     }else{
-        float vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, roughness);
-        float d   = ggx_ndf(ndoth, roughness);
+        float vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, roughness * roughness);
+        float d   = ggx_ndf(ndoth, roughness * roughness);
         return f * d * vis;
     }
 }
@@ -439,8 +439,8 @@ void main(){
     vec3 surfaceColor = albedo.rgb; // instread of metal f0
     vec3 f0 = mix(vec3(0.028), surfaceColor, metalness);
     if(useSSS > 0u){
-        // hack 
-        float sssFactor = step(0.07, to_luminance(albedo.rgb)); 
+        // hack
+        float sssFactor = step(0.07, to_luminance(albedo.rgb));
         diffuse = mix(diffuse, texture(sssTexture, v_uvNDC).rgb, vec3(sssFactor));
     }
     // approximate : diffuse = diffuse * (vec3(1.0) - f0) * (1.0 - metalness);

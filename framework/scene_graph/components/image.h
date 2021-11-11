@@ -86,6 +86,8 @@ class Image : public Component
 
 	const core::ImageView &get_vk_image_view() const;
 
+    bool has_mipmaps() { return mipmaps.size() > 1; }
+
   protected:
 	std::vector<uint8_t> &get_mut_data();
 

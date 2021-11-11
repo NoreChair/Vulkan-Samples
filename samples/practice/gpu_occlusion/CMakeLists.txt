@@ -23,7 +23,7 @@ add_sample_with_tags(
     ID ${FOLDER_NAME}
     CATEGORY ${CATEGORY_NAME}
     AUTHOR "Nore"
-    NAME "GPU_OC"
+    NAME "gpu_occlusion"
     DESCRIPTION "Using Gpu to query mesh occlusion"
     TAGS
         "Nore")
