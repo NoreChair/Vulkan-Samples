@@ -13,9 +13,9 @@
 namespace MainPass {
     void Init(vkb::Device& device);
     void BeginPass(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer);
-    void DrawOpaque(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *submeshs, vkb::sg::Scene* scene);
-    void DrawAlphaTest(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *submeshs, vkb::sg::Scene* scene);
-    void DrawDebugAABB(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, vkb::sg::SubMesh* debugMesh, const std::vector<std::reference_wrapper<const vkb::sg::AABB>>& aabbs);
+    void DrawOpaque(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *subMeshes, vkb::sg::Scene* scene, bool query);
+    void DrawAlphaTest(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *subMeshes, vkb::sg::Scene* scene, bool query);
+    void DrawDebugAABB(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, vkb::sg::SubMesh* debugMesh, const std::vector<std::reference_wrapper<const vkb::sg::AABB>>& aabbs, glm::vec3 color);
     void DrawSky(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, vkb::sg::SubMesh* skyMesh, vkb::sg::Material* material);
     void EndPass(vkb::CommandBuffer& commandBuffer);
 }

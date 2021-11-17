@@ -150,7 +150,7 @@ void BufferAllocation::update(const uint8_t *data, uint32_t byteSize, uint32_t o
 {
 	if (offset + byteSize <= size)
 	{
-		buffer->update(data, byteSize, offset);
+		buffer->update(data, byteSize, to_u32(base_offset) + offset);
 	}
 	else
 	{

@@ -31,6 +31,17 @@ private:
     vkb::sg::Camera* m_mainCamera{nullptr};
 
     vkb::Timer m_timer;
+
+    struct Profiler{
+        bool drawAABB = false;
+        int sceneDrawCount = 0;
+        int frustumVisibleCount = 0;
+        int occlusionTestCount = 0;
+        int occlusionVisibleCount = 0;
+        int actualDrawCount = 0;
+        float frustumCullTime = 0.0f;
+        float occlusionCullTime = 0.0f;
+    } m_profilerData;
 };
 
 std::unique_ptr<vkb::Application> create_gpu_occlusion();

@@ -4,21 +4,27 @@
 #include "core/sampler.h"
 #include "core/buffer.h"
 #include "core/shader_module.h"
+#include "core/query_pool.h"
 
 namespace GraphicContext {
     extern std::unique_ptr<vkb::core::Image> g_sceneDepth;
     extern std::unique_ptr<vkb::core::Image> g_visibleBuffer;
     extern std::unique_ptr<vkb::core::ImageView> g_sceneDepthView;
+    extern std::unique_ptr<vkb::core::ImageView> g_visibleBufferView;
 
-    extern std::unique_ptr<vkb::core::Buffer> g_visibleResultBuffer;
-    extern std::unique_ptr<vkb::core::Buffer> g_cubeInstanceBuffer;
+    extern std::unique_ptr<vkb::core::Buffer> g_conditionRenderBuffer;
 
     extern std::unique_ptr<vkb::core::Sampler> g_linearClampSampler;
 
-    void InitAll(vkb::Device& device, int width, int height);
-    void InitWithResolution(vkb::Device& device, int width, int height);
+    extern std::unique_ptr<vkb::QueryPool> g_queryPool[3];
+
+    extern std::unique_ptr<uint32_t[]> g_visibleResultBuffer;
+
+    void InitAll(vkb::Device& device, uint32_t width, uint32_t height);
+    void InitWithResolution(vkb::Device& device, uint32_t width, uint32_t height);
     void InitWithoutResolution(vkb::Device& device);
-    void Resize(vkb::Device& device, int width, int height);
+    void PrepareOCContext(vkb::Device& device, uint32_t width, uint32_t height);
+    void Resize(vkb::Device& device, uint32_t width, uint32_t height);
     void ReleaseAll();
     void ReleaseWithResolution();
     void ReleaseWithoutResolution();
@@ -34,15 +40,19 @@ namespace GraphicResources {
 }
 
 namespace RenderSetting {
-    enum QueryMode :uint32_t {
-        None,
-        Deferral,
-        Immediateness
+    enum QueryMode :int {
+        None = 0,
+        Immediateness = 1,
+    };
+
+    enum ProxyMode :int {
+        Full = 0,
+        AABB = 1
     };
 
     extern bool g_conditionRender;
-    extern bool g_useLODQuery;
-    extern bool g_useAABBQuery;
+    extern bool g_waitAllResult;
     extern QueryMode g_queryMode;
+    extern ProxyMode g_proxyMode;
     extern uint32_t g_maxVisibleQueryCount;
 }

@@ -175,7 +175,7 @@ class RenderContext
 	/**
 	 * @brief Submits a command buffer related to a frame to a queue
 	 */
-	void submit(const Queue &queue, const std::vector<CommandBuffer *> &command_buffers);
+	VkFence submit(const Queue &queue, const std::vector<CommandBuffer *> &command_buffers);
 
 	/**
 	 * @brief Waits a frame to finish its rendering
@@ -226,6 +226,8 @@ class RenderContext
 	 * @brief Handles surface changes, only applicable if the render_context makes use of a swapchain
 	 */
 	virtual void handle_surface_changes();
+
+    const Queue& get_queue() { return queue; }
 
   protected:
 	VkExtent2D surface_extent;

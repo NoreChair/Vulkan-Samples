@@ -6,21 +6,27 @@
 using namespace vkb;
 using namespace GraphicContext;
 using namespace GraphicResources;
+using namespace RenderSetting;
 
 namespace MainPass {
     PipelineState rockPipelineState;
+    PipelineState grassPipelineState;
     PipelineState skyPipelineState;
     PipelineState debugDrawState;
 
     PipelineLayout* rockLayout{nullptr};
+    PipelineLayout* grassLayout{nullptr};
     PipelineLayout* skyLayout{nullptr};
     PipelineLayout* debugDrawLayout{nullptr};
+
+    int queryIndex = 0;
 
     void Init(vkb::Device& device) {
         ColorBlendState           defaultColorState;
         ColorBlendAttachmentState defaultAttaState;
         defaultColorState.attachments.push_back(defaultAttaState);
         rockPipelineState.set_color_blend_state(defaultColorState);
+        grassPipelineState.set_color_blend_state(defaultColorState);
 
         RasterizationState rasterizationState;
         rasterizationState.cull_mode = VK_CULL_MODE_FRONT_BIT;
@@ -35,7 +41,6 @@ namespace MainPass {
         rasterState.cull_mode = VK_CULL_MODE_NONE;
         debugDrawState.set_rasterization_state(rasterState);
         debugDrawState.set_color_blend_state(defaultColorState);
-        depthState.depth_compare_op = VK_COMPARE_OP_ALWAYS;
         depthState.depth_write_enable = false;
         debugDrawState.set_depth_stencil_state(depthState);
 
@@ -52,6 +57,11 @@ namespace MainPass {
         moudles.push_back(GraphicResources::g_shaderModules.find("rock.vert")->second);
         moudles.push_back(GraphicResources::g_shaderModules.find("rock.frag")->second);
         rockLayout = &device.get_resource_cache().request_pipeline_layout(moudles);
+
+        moudles.clear();
+        moudles.push_back(GraphicResources::g_shaderModules.find("grass.vert")->second);
+        moudles.push_back(GraphicResources::g_shaderModules.find("grass.frag")->second);
+        grassLayout = &device.get_resource_cache().request_pipeline_layout(moudles);
 
         moudles.clear();
         moudles.push_back(GraphicResources::g_shaderModules.find("sky.vert")->second);
@@ -101,25 +111,27 @@ namespace MainPass {
         commandBuffer.set_scissor(0, {scissor});
 
         commandBuffer.begin_render_pass(extent, renderPass, frameBuffer, clearValue);
+
+        queryIndex = 0;
     }
 
-    void DrawOpaque(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *submeshs, vkb::sg::Scene* scene) {
+    void DrawOpaque(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *subMeshes, vkb::sg::Scene* scene, bool query) {
         RenderUtils::BindPipelineState(commandBuffer, rockPipelineState);
 
         sg::Light* mainLight = scene->get_components<sg::Light>()[0];
         auto &render_frame = context.get_active_frame();
 
         struct {
-            glm::mat4 view_project;
-            glm::vec4 light_dir_intensity;
-            glm::vec4 light_color;
-            glm::vec4 camera_pos_ws;
+            glm::mat4 viewProject;
+            glm::vec4 lightDirIntensity;
+            glm::vec4 lightColor;
+            glm::vec4 cameraPos;
         } global;
 
-        global.view_project = RenderUtils::VulkanStyleProjection(camera->get_projection()) * camera->get_view();
-        global.light_dir_intensity = glm::vec4(mainLight->get_properties().direction, mainLight->get_properties().intensity);
-        global.light_color = glm::vec4(mainLight->get_properties().color, 1.0);
-        global.camera_pos_ws = -camera->get_view()[3];
+        global.viewProject = RenderUtils::VulkanStyleProjection(camera->get_projection()) * camera->get_view();
+        global.lightDirIntensity = glm::vec4(mainLight->get_properties().direction, mainLight->get_properties().intensity);
+        global.lightColor = glm::vec4(mainLight->get_properties().color, 1.0);
+        global.cameraPos = -camera->get_view()[3];
 
         auto globalUniform = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
         globalUniform.update(global);
@@ -127,7 +139,12 @@ namespace MainPass {
 
         commandBuffer.bind_pipeline_layout(*rockLayout);
 
-        for (auto iter = submeshs->begin(); iter != submeshs->end(); iter++) {
+        for (auto iter = subMeshes->begin(); iter != subMeshes->end(); iter++) {
+            if (query && g_queryMode != QueryMode::None && !g_conditionRender) {
+                if (g_visibleResultBuffer[queryIndex++] == 0) {
+                    continue;
+                }
+            }
             auto node = iter->second.first;
             auto submesh = iter->second.second;
 
@@ -165,14 +182,79 @@ namespace MainPass {
         }
     }
 
-    void DrawAlphaTest(vkb::RenderContext & context, vkb::CommandBuffer & commandBuffer, vkb::sg::Camera * camera, RenderUtils::SortedMeshes * submeshs, vkb::sg::Scene * scene) {
+    void DrawAlphaTest(vkb::RenderContext & context, vkb::CommandBuffer & commandBuffer, vkb::sg::Camera * camera, RenderUtils::SortedMeshes * subMeshes, vkb::sg::Scene * scene, bool query) {
+        RenderUtils::BindPipelineState(commandBuffer, grassPipelineState);
 
+        sg::Light* mainLight = scene->get_components<sg::Light>()[0];
+        auto &render_frame = context.get_active_frame();
+
+        struct {
+            glm::mat4 viewProject;
+            glm::vec4 lightDirIntensity;
+            glm::vec4 lightColor;
+            glm::vec4 cameraPos;
+        } global;
+
+        global.viewProject = RenderUtils::VulkanStyleProjection(camera->get_projection()) * camera->get_view();
+        global.lightDirIntensity = glm::vec4(mainLight->get_properties().direction, mainLight->get_properties().intensity);
+        global.lightColor = glm::vec4(mainLight->get_properties().color, 1.0);
+        global.cameraPos = -camera->get_view()[3];
+
+        auto globalUniform = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
+        globalUniform.update(global);
+        commandBuffer.bind_buffer(globalUniform.get_buffer(), globalUniform.get_offset(), globalUniform.get_size(), 0, 0, 0);
+
+        commandBuffer.bind_pipeline_layout(*grassLayout);
+
+        for (auto iter = subMeshes->begin(); iter != subMeshes->end(); iter++) {
+            if (query && g_queryMode != QueryMode::None && !g_conditionRender) {
+                if (g_visibleResultBuffer[queryIndex++] == 0) {
+                    continue;
+                }
+            }
+
+            auto node = iter->second.first;
+            auto submesh = iter->second.second;
+
+            auto material = (sg::PBRMaterial*) submesh->get_material();
+
+            struct {
+                glm::mat4 model;
+                glm::mat4 invModel;
+                glm::vec4 baseColor;
+            } uniform;
+
+            auto &transform = node->get_transform();
+            uniform.model = transform.get_world_matrix();
+            uniform.invModel = glm::inverse(transform.get_world_matrix());
+            uniform.baseColor = material->base_color_factor;
+
+            auto  allocation = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(uniform), 0);
+            allocation.update(uniform);
+            commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 1, 0);
+
+            DescriptorSetLayout &descriptorSetLayout = rockLayout->get_descriptor_set_layout(0);
+            for (auto &texture : submesh->get_material()->textures) {
+                auto layoutBinding = descriptorSetLayout.get_layout_binding(texture.first);
+                if (layoutBinding != nullptr) {
+                    commandBuffer.bind_image(texture.second->get_image()->get_vk_image_view(),
+                        texture.second->get_sampler()->vk_sampler, 0, layoutBinding->binding, 0);
+                }
+            }
+
+            if (RenderUtils::BindVertexInput(commandBuffer, *rockLayout, submesh)) {
+                commandBuffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
+            } else {
+                commandBuffer.draw(submesh->vertices_count, 1, 0, 0);
+            }
+        }
     }
 
-    void DrawDebugAABB(vkb::RenderContext & context, vkb::CommandBuffer & commandBuffer, vkb::sg::Camera * camera, vkb::sg::SubMesh * debugMesh, const std::vector<std::reference_wrapper<const vkb::sg::AABB>>& aabbs) {
+    void DrawDebugAABB(vkb::RenderContext & context, vkb::CommandBuffer & commandBuffer, vkb::sg::Camera * camera, vkb::sg::SubMesh * debugMesh, const std::vector<std::reference_wrapper<const vkb::sg::AABB>>& aabbs, glm::vec3 color) {
         if (aabbs.size() == 0) {
             return;
         }
+
         RenderUtils::BindPipelineState(commandBuffer, debugDrawState);
         commandBuffer.bind_pipeline_layout(*debugDrawLayout);
 
@@ -191,23 +273,23 @@ namespace MainPass {
 
         for (int i = 0; i < aabbs.size(); i++) {
             const auto& aabb = aabbs[i].get();
-            instanceData.emplace_back(Instance{aabb.get_center(),(aabb.get_max() - aabb.get_min()) * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)});
+            instanceData.emplace_back(Instance{aabb.get_center(),(aabb.get_max() - aabb.get_min()) * 0.5f, color});
         }
 
-        auto &render_frame = context.get_active_frame();
+        auto &rendeFrame = context.get_active_frame();
 
-        auto globalUniform = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
+        auto globalUniform = rendeFrame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
         globalUniform.update(global);
         commandBuffer.bind_buffer(globalUniform.get_buffer(), globalUniform.get_offset(), globalUniform.get_size(), 0, 0, 0);
 
-        auto instanceBuffer = render_frame.allocate_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof(Instance) * aabbs.size());
+        auto instanceBuffer = rendeFrame.allocate_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof(Instance) * aabbs.size());
         instanceBuffer.update((uint8_t *)instanceData.data(), instanceData.size() * sizeof(Instance), 0);
 
         std::vector<std::reference_wrapper<const core::Buffer>> buffers;
         auto vert_iter = debugMesh->vertex_buffers.find(std::string("position"));
         buffers.emplace_back(std::reference_wrapper<const core::Buffer>(std::ref(vert_iter->second)));
         buffers.emplace_back(std::reference_wrapper<const core::Buffer>(std::ref(instanceBuffer.get_buffer())));
-        commandBuffer.bind_vertex_buffers(0, buffers, {0, 0});
+        commandBuffer.bind_vertex_buffers(0, buffers, {0, instanceBuffer.get_offset()});
         if (debugMesh->vertex_indices != 0) {
             commandBuffer.bind_index_buffer(*debugMesh->index_buffer, debugMesh->index_offset, debugMesh->index_type);
             commandBuffer.draw_indexed(debugMesh->vertex_indices, aabbs.size(), 0, 0, 0);
@@ -229,8 +311,8 @@ namespace MainPass {
         v[3] = glm::vec4(0.0, 0.0, 0.0, 1.0);
         global.view_proj = RenderUtils::VulkanStyleProjection(camera->get_projection()) * v;
 
-        auto &render_frame = context.get_active_frame();
-        auto globalUniform = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
+        auto &rendeFrame = context.get_active_frame();
+        auto globalUniform = rendeFrame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(global), 0);
         globalUniform.update(global);
         commandBuffer.bind_buffer(globalUniform.get_buffer(), globalUniform.get_offset(), globalUniform.get_size(), 0, 0, 0);
         commandBuffer.bind_image(material->textures[0]->get_image()->get_vk_image_view(), *GraphicContext::g_linearClampSampler, 0, 1, 0);

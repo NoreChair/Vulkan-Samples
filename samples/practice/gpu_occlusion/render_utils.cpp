@@ -233,16 +233,17 @@ namespace RenderUtils {
     }
 
     bool FrustumAABB(const glm::vec4 planes[6], glm::vec3 min, glm::vec3 max) {
-        //glm::vec4 center = glm::vec4((min + max) * 0.5f, 1.0f);
-        //glm::vec3 extent = (max - min) * 0.5f;
-        //for (uint32_t i = 0; i < 6; i++) {
-        //    glm::vec3 normal = glm::vec3(planes[i].xyz);
-        //    float e = glm::dot(normal, extent);
-        //    if (glm::dot(planes[i], center) + e < 0.0f) {
-        //        return false;
-        //    }
-        //}
-        //return true;
+        glm::vec4 center = glm::vec4((min + max) * 0.5f, 1.0f);
+        glm::vec3 extent = (max - min) * 0.5f;
+        for (uint32_t i = 0; i < 4; i++) {
+            glm::vec3 normal = glm::vec3(planes[i].xyz);
+            glm::vec4 forward = glm::vec4(glm::sign(normal) * extent, 0.0);
+            float distance = glm::dot(center + forward, planes[i]);
+            if (distance < 0.0f) {
+                return false;
+            }
+        }
+        return true;
 
         //for (int i = 0; i < 6; i++) {
         //    int out = 0;
@@ -259,14 +260,14 @@ namespace RenderUtils {
 
         //return true;
 
-        glm::vec4 center = glm::vec4((min + max) * 0.5f, 1.0f);
-        glm::vec3 extent = (max - min) * 0.5f;
-        float radius = glm::max(glm::max(extent.x, extent.y), extent.z);
-        for (int i = 0; i < 6; i++) {
-            if (glm::dot(center, planes[i]) + radius < 0.0) {
-                return false;
-            }
-        }
-        return true;
+        //glm::vec4 center = glm::vec4((min + max) * 0.5f, 1.0f);
+        //glm::vec3 extent = (max - min) * 0.5f;
+        //float radius = glm::max(glm::max(extent.x, extent.y), extent.z);
+        //for (int i = 0; i < 6; i++) {
+        //    if (glm::dot(center, planes[i]) + radius < 0.0) {
+        //        return false;
+        //    }
+        //}
+        //return true;
     }
 }

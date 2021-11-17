@@ -360,7 +360,7 @@ VkSemaphore RenderContext::submit(const Queue &queue, const std::vector<CommandB
 	return signal_semaphore;
 }
 
-void RenderContext::submit(const Queue &queue, const std::vector<CommandBuffer *> &command_buffers)
+VkFence RenderContext::submit(const Queue &queue, const std::vector<CommandBuffer *> &command_buffers)
 {
 	std::vector<VkCommandBuffer> cmd_buf_handles(command_buffers.size(), VK_NULL_HANDLE);
 	std::transform(command_buffers.begin(), command_buffers.end(), cmd_buf_handles.begin(), [](const CommandBuffer *cmd_buf) { return cmd_buf->get_handle(); });
@@ -375,6 +375,7 @@ void RenderContext::submit(const Queue &queue, const std::vector<CommandBuffer *
 	VkFence fence = frame.request_fence();
 
 	queue.submit({submit_info}, fence);
+    return fence;
 }
 
 void RenderContext::wait_frame()

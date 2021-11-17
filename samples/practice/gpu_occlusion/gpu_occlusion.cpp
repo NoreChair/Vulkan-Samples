@@ -9,12 +9,12 @@
 #include "scene_graph/components/sub_mesh.h"
 #include "scene_graph/components/pbr_material.h"
 
-
 #include "api_vulkan_sample.h"
 #include "graphic_context.h"
 #include "render_utils.h"
 
 #include "main_pass.h"
+#include "occlusion_cull_pass.h"
 
 #include <thread>
 #include <algorithm>
@@ -47,12 +47,13 @@ bool gpu_occlusion::prepare(vkb::Platform& platform) {
         return false;
     }
 
-    auto& extent = get_render_context().get_surface_extent();
+    const auto& extent = get_render_context().get_surface_extent();
 
     prepare_resources();
     prepare_scene();
 
     GraphicContext::InitAll(*device, extent.width, extent.height);
+    OcclusionCullPass::Init(*device);
     MainPass::Init(*device);
 
     gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get());
@@ -72,8 +73,8 @@ void gpu_occlusion::request_gpu_features(vkb::PhysicalDevice& gpu) {
 }
 
 void gpu_occlusion::resize(const uint32_t width, const uint32_t height) {
-    VulkanSample::resize(width, height);
     device->wait_idle();
+    VulkanSample::resize(width, height);
     GraphicContext::Resize(*device, width, height);
 }
 
@@ -87,7 +88,38 @@ void gpu_occlusion::input_event(const vkb::InputEvent& input_event) {
     VulkanSample::input_event(input_event);
 }
 
-void gpu_occlusion::draw_gui() {}
+void gpu_occlusion::draw_gui() {
+    VulkanSample::draw_gui();
+
+    bool windowVisible = ImGui::Begin("Options", nullptr, ImGuiWindowFlags_MenuBar);
+    if (!windowVisible) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Draw Statis:");
+    ImGui::TextWrapped("  All drawable count: %d Actual draw count: %d ",
+        m_profilerData.sceneDrawCount, m_profilerData.actualDrawCount);
+    ImGui::TextWrapped("  Frustum culling %.2f ms  After frustum cull: %d \n  Occlusion culling %.2f ms, test %d, survive %d",
+        m_profilerData.frustumCullTime, m_profilerData.frustumVisibleCount,
+        m_profilerData.occlusionCullTime, m_profilerData.occlusionTestCount, m_profilerData.occlusionVisibleCount);
+
+    ImGui::Separator();
+    ImGui::Checkbox("Show AABB", &m_profilerData.drawAABB);
+    if (ImGui::CollapsingHeader("Render Options")) {
+        if (ImGui::BeginChild("Render Option List")) {
+            ImGui::Combo("Occlusion Cull Mode", (int*)&g_queryMode, "None\0Immediateness\0");
+            if (g_queryMode != 0) {
+                ImGui::Combo("Proxy Mode", (int*)&g_proxyMode, "Full\0AABB\0");
+                //ImGui::Checkbox("Condition Render", &g_conditionRender);
+                //ImGui::Checkbox("Wait All Result", &g_waitAllResult);
+            }
+            ImGui::EndChild();
+        }
+    }
+    ImGui::End();
+}
+
 
 void gpu_occlusion::finish() {
     GraphicContext::ReleaseAll();
@@ -125,6 +157,8 @@ void gpu_occlusion::prepare_resources() {
         {"depth_only.frag", VK_SHADER_STAGE_FRAGMENT_BIT},
         {"rock.vert", VK_SHADER_STAGE_VERTEX_BIT},
         {"rock.frag", VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"grass.vert", VK_SHADER_STAGE_VERTEX_BIT},
+        {"grass.frag", VK_SHADER_STAGE_FRAGMENT_BIT},
         {"sky.vert", VK_SHADER_STAGE_VERTEX_BIT},
         {"sky.frag", VK_SHADER_STAGE_FRAGMENT_BIT}
     };
@@ -168,10 +202,11 @@ void gpu_occlusion::prepare_scene() {
     }
 
     for (auto mesh : s_fullMeshes) {
-        for (auto node : mesh->get_nodes()) {
+        for (const auto node : mesh->get_nodes()) {
             auto& bounds = node->get_component<vkb::sg::Mesh>().get_bounds();
             auto worldBound = std::make_unique<vkb::sg::AABB>(bounds.get_min(), bounds.get_max());
-            worldBound->transform(node->get_transform().get_world_matrix());
+            auto mat = node->get_transform().get_world_matrix();
+            worldBound->transform(mat);
             node->set_component(*worldBound);
             scene->add_component(std::move(worldBound));
         }
@@ -184,7 +219,7 @@ void gpu_occlusion::prepare_scene() {
     m_mainCamera->set_near_plane(0.01f);
 
     // light
-    auto& lights = scene->get_components<sg::Light>();
+    const auto& lights = scene->get_components<sg::Light>();
     auto  iter = std::find_if(lights.begin(), lights.end(), [](sg::Light *iter) -> bool { return iter->get_light_type() == sg::LightType::Directional; });
     assert(iter != lights.end());
 
@@ -212,40 +247,97 @@ void gpu_occlusion::render(float delta_time) {
     RenderUtils::SortedMeshes transparentNodes;
     RenderUtils::SortedMeshes cullOffNodes;
     sg::Transform &mainCameraRTS = m_mainCamera->get_node()->get_transform();
-    glm::vec3     cameraForward = glm::mat3(mainCameraRTS.get_world_matrix()) * glm::vec3(0.0, 0.0, 1.0);
+    glm::mat4 cameraMatrix = mainCameraRTS.get_world_matrix();
+    glm::vec3 cameraForward = -glm::vec3(cameraMatrix[0][2], cameraMatrix[1][2], cameraMatrix[2][2]);
 
-    std::vector<std::reference_wrapper<const sg::AABB>> boundingBoxs;
-    uint32_t nodeCount = 0;
+    m_profilerData.sceneDrawCount = 0;
+    m_profilerData.frustumVisibleCount = 0;
+    m_profilerData.occlusionVisibleCount = 0;
+    m_profilerData.occlusionTestCount = 0.0f;
+    m_profilerData.occlusionCullTime = 0.0f;
 
-    std::vector<sg::Node*> visibleNode;
+    std::vector<std::reference_wrapper<const sg::AABB>> opaqueBoundingBoxs;
+    std::vector<std::reference_wrapper<const sg::AABB>> alphaTestBoundingBoxs;
+
     for (auto var : s_fullMeshes) {
         const auto &bounds = var->get_bounds();
         for (auto node : var->get_nodes()) {
-            nodeCount++;
+            m_profilerData.sceneDrawCount++;
             const auto& aabb = node->get_component<sg::AABB>();
             if (RenderUtils::FrustumAABB(frustum, aabb.get_min(), aabb.get_max())) {
+                m_profilerData.frustumVisibleCount++;
                 glm::vec3 delta = aabb.get_center() - mainCameraRTS.get_world_translation();
                 float     distance = glm::dot(cameraForward, delta);
 
                 for (auto &sub_mesh : node->get_component<sg::Mesh>().get_submeshes()) {
-                    if (sub_mesh->get_material()->alpha_mode == vkb::sg::AlphaMode::Blend) {
-                        transparentNodes.emplace(distance, std::make_pair(node, sub_mesh));
+                    if (sub_mesh->get_material()->alpha_mode == vkb::sg::AlphaMode::Opaque) {
+                        opaqueNodes.emplace(distance, std::make_pair(node, sub_mesh));
+                        opaqueBoundingBoxs.emplace_back(std::ref(aabb));
                     } else if (sub_mesh->get_material()->alpha_mode == vkb::sg::AlphaMode::Mask) {
                         cullOffNodes.emplace(distance, std::make_pair(node, sub_mesh));
+                        alphaTestBoundingBoxs.emplace_back(std::ref(aabb));
                     } else {
-                        boundingBoxs.emplace_back(std::ref(aabb));
-                        opaqueNodes.emplace(distance, std::make_pair(node, sub_mesh));
+                        transparentNodes.emplace(distance, std::make_pair(node, sub_mesh));
                     }
                 }
             }
         }
     }
-    LOGI("All count {}, visible count {}", vkb::to_string(nodeCount), vkb::to_string(boundingBoxs.size()));
+
+    m_profilerData.frustumCullTime = m_timer.elapsed() * 1e3;
+    m_profilerData.actualDrawCount = m_profilerData.frustumVisibleCount;
     m_timer.lap();
 
     auto& commandBuffer = render_context->begin();
-    commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
+    if (g_queryMode != RenderSetting::QueryMode::None) {
+        auto& queryCommandBuffer = render_context->get_active_frame().request_command_buffer(render_context->get_queue());
+        queryCommandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        OcclusionCullPass::BeginPass(*render_context, queryCommandBuffer);
+
+        if (g_proxyMode == RenderSetting::ProxyMode::Full) {
+            OcclusionCullPass::DrawModel(*render_context, queryCommandBuffer, m_mainCamera, &opaqueNodes, true);
+            OcclusionCullPass::DrawModel(*render_context, queryCommandBuffer, m_mainCamera, &cullOffNodes, true);
+        } else if (g_proxyMode == RenderSetting::ProxyMode::AABB) {
+            OcclusionCullPass::DrawProxy(*render_context, queryCommandBuffer, m_mainCamera, m_unitCube, &opaqueNodes, true);
+            OcclusionCullPass::DrawProxy(*render_context, queryCommandBuffer, m_mainCamera, m_unitCube, &cullOffNodes, true);
+        }
+
+        int queryCount = OcclusionCullPass::EndPass(queryCommandBuffer);
+        queryCommandBuffer.end();
+
+        VkFence fence = render_context->submit(render_context->get_queue(), {&queryCommandBuffer});
+
+        VkQueryResultFlags flags = VK_QUERY_RESULT_PARTIAL_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT;
+
+        if (g_waitAllResult) {
+            flags = VK_QUERY_RESULT_WAIT_BIT;
+            vkWaitForFences(device->get_handle(), 1, &fence, true, UINT64_MAX);
+        }
+
+        VkResult result = g_queryPool[render_context->get_active_frame_index()]->get_results(0, queryCount, sizeof(uint32_t)* queryCount, g_visibleResultBuffer.get(), sizeof(uint32_t), flags);
+
+        if (result != VK_SUCCESS) {
+            LOGE("Vulkan Error : Occlusion test return unsuccess result : {}", vkb::to_string(result));
+            VK_CHECK(result);
+        }
+
+        m_profilerData.occlusionCullTime = m_timer.elapsed() * 1e3;
+        m_timer.lap();
+
+        int visibleCount = 0;
+        for (int i = 0; i < queryCount; i++) {
+            if (g_visibleResultBuffer[i] != 0) {
+                visibleCount++;
+            }
+        }
+
+        m_profilerData.occlusionTestCount = queryCount;
+        m_profilerData.occlusionVisibleCount = visibleCount;
+        m_profilerData.actualDrawCount = visibleCount;
+    }
+
+    commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
     ImageMemoryBarrier barrier{};
     barrier.src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -257,10 +349,13 @@ void gpu_occlusion::render(float delta_time) {
 
     MainPass::BeginPass(*render_context.get(), commandBuffer);
 
-    MainPass::DrawOpaque(*render_context, commandBuffer, m_mainCamera, &opaqueNodes, scene.get());
+    MainPass::DrawOpaque(*render_context, commandBuffer, m_mainCamera, &opaqueNodes, scene.get(), true);
+    MainPass::DrawAlphaTest(*render_context, commandBuffer, m_mainCamera, &cullOffNodes, scene.get(), true);
 
-    MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, boundingBoxs);
-
+    if (m_profilerData.drawAABB) {
+        MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, opaqueBoundingBoxs, glm::vec3(0.0, 1.0, 0.0));
+        MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, alphaTestBoundingBoxs, glm::vec3(0.0, 0.0, 1.0));
+    }
     if (gui) {
         gui->draw(commandBuffer);
     }
