@@ -27,20 +27,41 @@ private:
 private:
     const std::string k_name = "GPU Occlusion";
 
+    bool m_firstFrame{true};
+    vkb::Timer m_timer;
     vkb::sg::SubMesh* m_unitCube{nullptr};
     vkb::sg::Camera* m_mainCamera{nullptr};
 
-    vkb::Timer m_timer;
-
-    struct Profiler{
+    struct Profiler {
         bool drawAABB = false;
         int sceneDrawCount = 0;
         int frustumVisibleCount = 0;
         int occlusionTestCount = 0;
         int occlusionVisibleCount = 0;
         int actualDrawCount = 0;
+        int frameCount = 0;
+        float avgFrustumCullTime = 0.0f;
+        float avgOcclusionCullTime = 0.0f;
+        float avgRenderDrawTime = 0.0f;
+        float avgOcclusionWaitTime = 0.0f;
         float frustumCullTime = 0.0f;
         float occlusionCullTime = 0.0f;
+        float renderDrawTime = 0.0f;
+        float occlusionWaitTime = 0.0f;
+
+        void Profile() {
+            if (frameCount >= 30) {
+                avgFrustumCullTime = frustumCullTime / frameCount;
+                avgOcclusionCullTime = occlusionCullTime / frameCount;
+                avgRenderDrawTime = renderDrawTime / frameCount;
+                avgOcclusionWaitTime = occlusionWaitTime / frameCount;
+                frustumCullTime = 0.0f;
+                occlusionCullTime = 0.0f;
+                renderDrawTime = 0.0f;
+                occlusionWaitTime = 0.0f;
+                frameCount = 0;
+            }
+        }
     } m_profilerData;
 };
 

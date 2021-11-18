@@ -15,7 +15,7 @@ namespace OcclusionCullPass {
     int queryIndex = 0;
 
     void Init(Device & device) {
-        std::vector<ShaderModule*> moudles{ g_shaderModules.find("depth_only.vert")->second, g_shaderModules.find("depth_only.frag")->second};
+        std::vector<ShaderModule*> moudles{g_shaderModules.find("depth_only.vert")->second, g_shaderModules.find("depth_only.frag")->second};
         simpleLayout = &device.get_resource_cache().request_pipeline_layout(moudles);
         moudles.clear();
     }
@@ -39,7 +39,7 @@ namespace OcclusionCullPass {
         auto &renderPass = context.get_device().get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
         auto &frameBuffer = context.get_device().get_resource_cache().request_framebuffer(imageViews, renderPass);
 
-        std::vector<VkClearValue> clearValue{initializers::clear_depth_stencil_value(0.0f, 0.0f)};
+        std::vector<VkClearValue> clearValue{initializers::clear_depth_stencil_value(0.0f, 0)};
 
         VkViewport viewport{};
         viewport.width = static_cast<float>(extent.width);
@@ -54,6 +54,7 @@ namespace OcclusionCullPass {
 
         commandBuffer.reset_query_pool(*(g_queryPool[context.get_active_frame_index()]), 0, g_maxVisibleQueryCount);
         queryIndex = 0;
+        g_visibleNodeMap[context.get_active_frame_index()].clear();
         commandBuffer.begin_render_pass(extent, renderPass, frameBuffer, clearValue);
     }
 
@@ -63,7 +64,7 @@ namespace OcclusionCullPass {
 
         auto &rendeFrame = context.get_active_frame();
         for (auto iter = subMeshes->begin(); iter != subMeshes->end(); iter++) {
-            if (queryIndex >= g_maxVisibleQueryCount) {
+            if (queryIndex >= (int)g_maxVisibleQueryCount) {
                 LOGE("Error : occlusion query count out of max limitation {}", vkb::to_string(g_maxVisibleQueryCount));
                 continue;
             }
@@ -85,6 +86,7 @@ namespace OcclusionCullPass {
 
             if (query) {
                 commandBuffer.begin_query(*(g_queryPool[context.get_active_frame_index()]), queryIndex, 0);
+                g_visibleNodeMap[context.get_active_frame_index()].insert(std::make_pair(node, queryIndex));
             }
 
             if (RenderUtils::BindVertexInput(commandBuffer, *simpleLayout, submesh)) {
@@ -120,6 +122,7 @@ namespace OcclusionCullPass {
 
             if (query) {
                 commandBuffer.begin_query(*(g_queryPool[context.get_active_frame_index()]), queryIndex, 0);
+                g_visibleNodeMap[context.get_active_frame_index()].insert(std::make_pair(node, queryIndex));
             }
             if (RenderUtils::BindVertexInput(commandBuffer, *simpleLayout, proxy)) {
                 commandBuffer.draw_indexed(proxy->vertex_indices, 1, 0, 0, 0);

@@ -56,7 +56,7 @@ bool gpu_occlusion::prepare(vkb::Platform& platform) {
     OcclusionCullPass::Init(*device);
     MainPass::Init(*device);
 
-    gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get());
+    gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get(), 16.0f);
     return true;
 }
 
@@ -76,12 +76,33 @@ void gpu_occlusion::resize(const uint32_t width, const uint32_t height) {
     device->wait_idle();
     VulkanSample::resize(width, height);
     GraphicContext::Resize(*device, width, height);
+    gui->resize(width, height);
+
+    m_firstFrame = true;
+    memset(g_visibleResultBuffer.get(), 255, sizeof(uint32_t) * g_maxVisibleQueryCount * 3);
+    g_visibleNodeMap[0].clear();
+    g_visibleNodeMap[1].clear();
+    g_visibleNodeMap[2].clear();
 }
 
+QueryMode previousMode = g_queryMode;
+
 void gpu_occlusion::update(float delta_time) {
+
+    m_profilerData.Profile();
+
     update_scene(delta_time);
     update_gui(delta_time);
     render(delta_time);
+
+    if (previousMode != g_queryMode) {
+        m_firstFrame = true;
+        memset(g_visibleResultBuffer.get(), 255, sizeof(uint32_t) * g_maxVisibleQueryCount * 3);
+        g_visibleNodeMap[0].clear();
+        g_visibleNodeMap[1].clear();
+        g_visibleNodeMap[2].clear();
+    }
+    previousMode = g_queryMode;
 }
 
 void gpu_occlusion::input_event(const vkb::InputEvent& input_event) {
@@ -96,24 +117,23 @@ void gpu_occlusion::draw_gui() {
         ImGui::End();
         return;
     }
-
     ImGui::Text("Draw Statis:");
     ImGui::TextWrapped("  All drawable count: %d Actual draw count: %d ",
         m_profilerData.sceneDrawCount, m_profilerData.actualDrawCount);
-    ImGui::TextWrapped("  Frustum culling %.2f ms  After frustum cull: %d \n  Occlusion culling %.2f ms, test %d, survive %d",
-        m_profilerData.frustumCullTime, m_profilerData.frustumVisibleCount,
-        m_profilerData.occlusionCullTime, m_profilerData.occlusionTestCount, m_profilerData.occlusionVisibleCount);
+    ImGui::TextWrapped("  Frustum culling %.2f ms  After frustum cull: %d \n  Occlusion culling avg %.2f ms wait %.4f ms, test %d, survive %d",
+        m_profilerData.avgFrustumCullTime, m_profilerData.frustumVisibleCount,
+        m_profilerData.avgOcclusionCullTime, m_profilerData.avgOcclusionWaitTime, m_profilerData.occlusionTestCount, m_profilerData.occlusionVisibleCount);
+    ImGui::TextWrapped("  Build draw command %.2f ms  Frame time %.2f ms", m_profilerData.avgRenderDrawTime, frame_time);
 
     ImGui::Separator();
     ImGui::Checkbox("Show AABB", &m_profilerData.drawAABB);
     if (ImGui::CollapsingHeader("Render Options")) {
         if (ImGui::BeginChild("Render Option List")) {
-            ImGui::Combo("Occlusion Cull Mode", (int*)&g_queryMode, "None\0Immediateness\0");
-            if (g_queryMode != 0) {
-                ImGui::Combo("Proxy Mode", (int*)&g_proxyMode, "Full\0AABB\0");
-                //ImGui::Checkbox("Condition Render", &g_conditionRender);
-                //ImGui::Checkbox("Wait All Result", &g_waitAllResult);
-            }
+            ImGui::Combo("Occlusion Cull Mode", (int*)&g_queryMode, "None\0Immediate\0Delay\0");
+            //if (g_queryMode != 0) {
+            //    ImGui::Combo("Proxy Mode", (int*)&g_proxyMode, "Full\0AABB\0");
+            //}
+
             ImGui::EndChild();
         }
     }
@@ -253,8 +273,7 @@ void gpu_occlusion::render(float delta_time) {
     m_profilerData.sceneDrawCount = 0;
     m_profilerData.frustumVisibleCount = 0;
     m_profilerData.occlusionVisibleCount = 0;
-    m_profilerData.occlusionTestCount = 0.0f;
-    m_profilerData.occlusionCullTime = 0.0f;
+    m_profilerData.occlusionTestCount = 0;
 
     std::vector<std::reference_wrapper<const sg::AABB>> opaqueBoundingBoxs;
     std::vector<std::reference_wrapper<const sg::AABB>> alphaTestBoundingBoxs;
@@ -284,7 +303,7 @@ void gpu_occlusion::render(float delta_time) {
         }
     }
 
-    m_profilerData.frustumCullTime = m_timer.elapsed() * 1e3;
+    m_profilerData.frustumCullTime += (float)m_timer.elapsed() * 1e3f;
     m_profilerData.actualDrawCount = m_profilerData.frustumVisibleCount;
     m_timer.lap();
 
@@ -304,37 +323,58 @@ void gpu_occlusion::render(float delta_time) {
         }
 
         int queryCount = OcclusionCullPass::EndPass(queryCommandBuffer);
+        vkCmdCopyQueryPoolResults(queryCommandBuffer.get_handle(), g_queryPool[render_context->get_active_frame_index()]->get_handle(),
+            0, queryCount, g_visibleReadbackBuffer->get_handle(), render_context->get_active_frame_index() * sizeof(uint32_t) * g_maxVisibleQueryCount,
+            sizeof(uint32_t), VK_QUERY_RESULT_WAIT_BIT);
         queryCommandBuffer.end();
 
         VkFence fence = render_context->submit(render_context->get_queue(), {&queryCommandBuffer});
 
-        VkQueryResultFlags flags = VK_QUERY_RESULT_PARTIAL_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT;
-
-        if (g_waitAllResult) {
-            flags = VK_QUERY_RESULT_WAIT_BIT;
+        Timer time;
+        time.start();
+        if (g_queryMode == RenderSetting::QueryMode::Immediate) {
             vkWaitForFences(device->get_handle(), 1, &fence, true, UINT64_MAX);
-        }
+            VkResult result = g_queryPool[render_context->get_active_frame_index()]->get_results(0, queryCount, sizeof(uint32_t)* queryCount, g_visibleResultBuffer.get(), sizeof(uint32_t), VK_QUERY_RESULT_WAIT_BIT);
 
-        VkResult result = g_queryPool[render_context->get_active_frame_index()]->get_results(0, queryCount, sizeof(uint32_t)* queryCount, g_visibleResultBuffer.get(), sizeof(uint32_t), flags);
+            m_profilerData.occlusionWaitTime += (float)time.stop() * 1e3f;
+            if (result != VK_SUCCESS) {
+                LOGE("Vulkan Error : Occlusion test return unsuccess result : {}", vkb::to_string(result));
+                VK_CHECK(result);
+            }
 
-        if (result != VK_SUCCESS) {
-            LOGE("Vulkan Error : Occlusion test return unsuccess result : {}", vkb::to_string(result));
-            VK_CHECK(result);
-        }
+            int visibleCount = 0;
+            for (int i = 0; i < queryCount; i++) {
+                if (g_visibleResultBuffer[i] != 0) {
+                    visibleCount++;
+                }
+            }
+            m_profilerData.occlusionTestCount = queryCount;
+            m_profilerData.occlusionVisibleCount = visibleCount;
+            m_profilerData.actualDrawCount = visibleCount;
+        } else if (g_queryMode == RenderSetting::QueryMode::Delay) {
+            if (!m_firstFrame) {
+                int lastFrameIndex = (render_context->get_active_frame_index() + (3 - g_delayFrame)) % 3;
+                uint32_t lastFrameQueryCount = (uint32_t)g_visibleNodeMap[lastFrameIndex].size();
+                // TODO : this is no a safe way to get the query result, we can't make sure that previous frame's command all done on gpu, unless we wait fence
+                // It will make a flickering result
+                uint32_t* resultPointer = (uint32_t*)g_visibleReadbackBuffer->map();
+                resultPointer += lastFrameIndex * g_maxVisibleQueryCount;
+                m_profilerData.occlusionWaitTime += (float)time.stop() * 1e3f;
 
-        m_profilerData.occlusionCullTime = m_timer.elapsed() * 1e3;
-        m_timer.lap();
-
-        int visibleCount = 0;
-        for (int i = 0; i < queryCount; i++) {
-            if (g_visibleResultBuffer[i] != 0) {
-                visibleCount++;
+                int visibleCount = 0;
+                for (uint32_t i = 0; i < lastFrameQueryCount; i++) {
+                    if (resultPointer[i] != 0) {
+                        visibleCount++;
+                    }
+                }
+                m_profilerData.occlusionTestCount = lastFrameQueryCount;
+                m_profilerData.occlusionVisibleCount = visibleCount;
+                m_profilerData.actualDrawCount = visibleCount;
             }
         }
-
-        m_profilerData.occlusionTestCount = queryCount;
-        m_profilerData.occlusionVisibleCount = visibleCount;
-        m_profilerData.actualDrawCount = visibleCount;
+        float t = (float)m_timer.elapsed() * 1e3f;
+        m_profilerData.occlusionCullTime += t;
+        m_timer.lap();
     }
 
     commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
@@ -371,9 +411,12 @@ void gpu_occlusion::render(float delta_time) {
     commandBuffer.image_memory_barrier(render_context->get_active_frame().get_render_target().get_views()[0], barrier);
 
     commandBuffer.end();
-    render_context->submit(commandBuffer);
 
+    m_firstFrame = false;
+    m_profilerData.renderDrawTime += (float)m_timer.elapsed() * 1e3f;
     m_timer.stop();
+    m_profilerData.frameCount++;
+    render_context->submit(commandBuffer);
 }
 
 std::unique_ptr<vkb::Application> create_gpu_occlusion() {

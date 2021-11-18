@@ -7,13 +7,12 @@ namespace GraphicContext {
     std::unique_ptr<vkb::core::ImageView> g_sceneDepthView{nullptr};
     std::unique_ptr<vkb::core::ImageView> g_visibleBufferView{nullptr};
 
-    std::unique_ptr<vkb::core::Buffer> g_conditionRenderBuffer{nullptr};
-
     std::unique_ptr<vkb::core::Sampler> g_linearClampSampler{nullptr};
 
-    std::unique_ptr<vkb::QueryPool> g_queryPool[3]{nullptr, nullptr, nullptr};
-
+    std::unique_ptr<vkb::core::Buffer> g_visibleReadbackBuffer{nullptr};
     std::unique_ptr<uint32_t[]> g_visibleResultBuffer{nullptr};
+    std::unique_ptr<vkb::QueryPool> g_queryPool[3]{nullptr, nullptr, nullptr};
+    std::unordered_map<vkb::sg::Node*, uint32_t> g_visibleNodeMap[3];
 
     void InitAll(vkb::Device& device, uint32_t width, uint32_t height) {
         InitWithoutResolution(device);
@@ -59,34 +58,28 @@ namespace GraphicContext {
     }
 
     void PrepareOCContext(vkb::Device & device, uint32_t width, uint32_t height) {
-        VkExtent3D bufferSize{512, 256, 1};
+        VkExtent3D bufferSize{256, 128, 1};
         VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
 
         VmaMemoryUsage transientMemory = VMA_MEMORY_USAGE_GPU_ONLY;
 #if defined(ANDROID) || defined(_ANDROID_)
         transientMemory = VMA_MEMORY_USAGE_GPU_LAZILY_ALLOCATED;
 #endif
-        if (RenderSetting::g_queryMode == RenderSetting::Immediateness) {
-            g_visibleBuffer = std::make_unique<vkb::core::Image>(device, bufferSize, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, transientMemory);
-            g_visibleBufferView = std::make_unique<vkb::core::ImageView>(*g_visibleBuffer, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
-        }
+        g_visibleBuffer = std::make_unique<vkb::core::Image>(device, bufferSize, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, transientMemory);
+        g_visibleBufferView = std::make_unique<vkb::core::ImageView>(*g_visibleBuffer, VkImageViewType::VK_IMAGE_VIEW_TYPE_2D);
 
-        if (RenderSetting::g_queryMode != RenderSetting::QueryMode::None) {
-            VkQueryPoolCreateInfo createInfo{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-            createInfo.queryType = VK_QUERY_TYPE_OCCLUSION;
-            createInfo.queryCount = RenderSetting::g_maxVisibleQueryCount;
+        VkQueryPoolCreateInfo createInfo{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        createInfo.queryType = VK_QUERY_TYPE_OCCLUSION;
+        createInfo.queryCount = RenderSetting::g_maxVisibleQueryCount;
 
-            g_queryPool[0] = std::make_unique<vkb::QueryPool>(device, createInfo);
-            g_queryPool[1] = std::make_unique<vkb::QueryPool>(device, createInfo);
-            g_queryPool[2] = std::make_unique<vkb::QueryPool>(device, createInfo);
+        g_queryPool[0] = std::make_unique<vkb::QueryPool>(device, createInfo);
+        g_queryPool[1] = std::make_unique<vkb::QueryPool>(device, createInfo);
+        g_queryPool[2] = std::make_unique<vkb::QueryPool>(device, createInfo);
 
-            if (RenderSetting::g_conditionRender) {
-                g_conditionRenderBuffer = std::make_unique<vkb::core::Buffer>(device, RenderSetting::g_maxVisibleQueryCount * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-            } else {
-                g_visibleResultBuffer = std::make_unique<uint32_t[]>(RenderSetting::g_maxVisibleQueryCount);
-            }
-        }
+        g_visibleResultBuffer = std::make_unique<uint32_t[]>(RenderSetting::g_maxVisibleQueryCount * 3);
+        memset(g_visibleResultBuffer.get(), 255, sizeof(uint32_t) * RenderSetting::g_maxVisibleQueryCount * 3);
 
+        g_visibleReadbackBuffer = std::make_unique<vkb::core::Buffer>(device, sizeof(uint32_t) * RenderSetting::g_maxVisibleQueryCount * 3, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_TO_CPU);
     }
 
     void Resize(vkb::Device& device, uint32_t width, uint32_t height) {
@@ -110,11 +103,11 @@ namespace GraphicContext {
 
         g_linearClampSampler.reset();
 
-        g_conditionRenderBuffer.reset();
         g_visibleResultBuffer.reset();
         g_queryPool[0].reset();
         g_queryPool[1].reset();
         g_queryPool[2].reset();
+        g_visibleReadbackBuffer.reset();
     }
 }
 
@@ -123,9 +116,8 @@ namespace GraphicResources {
 }
 
 namespace RenderSetting {
-    bool g_conditionRender = false;
-    bool g_waitAllResult = true;
-    QueryMode g_queryMode = QueryMode::Immediateness;
+    QueryMode g_queryMode = QueryMode::Delay;
     ProxyMode g_proxyMode = ProxyMode::Full;
     uint32_t g_maxVisibleQueryCount = 1024;
+    uint32_t g_delayFrame = 1;
 }

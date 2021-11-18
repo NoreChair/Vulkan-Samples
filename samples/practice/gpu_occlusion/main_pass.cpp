@@ -19,8 +19,6 @@ namespace MainPass {
     PipelineLayout* skyLayout{nullptr};
     PipelineLayout* debugDrawLayout{nullptr};
 
-    int queryIndex = 0;
-
     void Init(vkb::Device& device) {
         ColorBlendState           defaultColorState;
         ColorBlendAttachmentState defaultAttaState;
@@ -97,7 +95,7 @@ namespace MainPass {
         auto &renderPass = context.get_device().get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
         auto &frameBuffer = context.get_device().get_resource_cache().request_framebuffer(imageViews, renderPass);
 
-        std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0f, 0.0f, 0.0f, 0.0f), initializers::clear_depth_stencil_value(0.0f, 0.0f)};
+        std::vector<VkClearValue> clearValue{initializers::clear_color_value(0.0f, 0.0f, 0.0f, 0.0f), initializers::clear_depth_stencil_value(0.0f, 0)};
 
         VkViewport viewport{};
         viewport.width = static_cast<float>(extent.width);
@@ -111,8 +109,6 @@ namespace MainPass {
         commandBuffer.set_scissor(0, {scissor});
 
         commandBuffer.begin_render_pass(extent, renderPass, frameBuffer, clearValue);
-
-        queryIndex = 0;
     }
 
     void DrawOpaque(vkb::RenderContext& context, vkb::CommandBuffer& commandBuffer, vkb::sg::Camera* camera, RenderUtils::SortedMeshes *subMeshes, vkb::sg::Scene* scene, bool query) {
@@ -140,13 +136,23 @@ namespace MainPass {
         commandBuffer.bind_pipeline_layout(*rockLayout);
 
         for (auto iter = subMeshes->begin(); iter != subMeshes->end(); iter++) {
-            if (query && g_queryMode != QueryMode::None && !g_conditionRender) {
-                if (g_visibleResultBuffer[queryIndex++] == 0) {
-                    continue;
-                }
-            }
             auto node = iter->second.first;
             auto submesh = iter->second.second;
+
+            if (query && g_queryMode != QueryMode::None) {
+                int frameIndex = context.get_active_frame_index();
+                int lastFrameIndex = (frameIndex + (3 - g_delayFrame)) % 3;
+                std::unordered_map<sg::Node*, uint32_t>& visibleMap = g_visibleNodeMap[g_queryMode == QueryMode::Immediate ? frameIndex : lastFrameIndex];
+                if (visibleMap.find(node) != visibleMap.end()) {
+                    int index = visibleMap[node];
+                    if (g_queryMode == QueryMode::Delay) {
+                        index += lastFrameIndex * g_maxVisibleQueryCount;
+                    }
+                    if (g_visibleResultBuffer[index] == 0) {
+                        continue;
+                    }
+                }
+            }
 
             auto material = (sg::PBRMaterial*) submesh->get_material();
 
@@ -207,14 +213,23 @@ namespace MainPass {
         commandBuffer.bind_pipeline_layout(*grassLayout);
 
         for (auto iter = subMeshes->begin(); iter != subMeshes->end(); iter++) {
-            if (query && g_queryMode != QueryMode::None && !g_conditionRender) {
-                if (g_visibleResultBuffer[queryIndex++] == 0) {
-                    continue;
-                }
-            }
-
             auto node = iter->second.first;
             auto submesh = iter->second.second;
+
+            if (query && g_queryMode != QueryMode::None) {
+                int frameIndex = context.get_active_frame_index();
+                int lastFrameIndex = (frameIndex + (3 - g_delayFrame)) % 3;
+                std::unordered_map<sg::Node*, uint32_t>& visibleMap = g_visibleNodeMap[g_queryMode == QueryMode::Immediate ? frameIndex : lastFrameIndex];
+                if (visibleMap.find(node) != visibleMap.end()) {
+                    int index = visibleMap[node];
+                    if (g_queryMode == QueryMode::Delay) {
+                        index += lastFrameIndex * g_maxVisibleQueryCount;
+                    }
+                    if (g_visibleResultBuffer[index] == 0) {
+                        continue;
+                    }
+                }
+            }
 
             auto material = (sg::PBRMaterial*) submesh->get_material();
 
@@ -283,7 +298,7 @@ namespace MainPass {
         commandBuffer.bind_buffer(globalUniform.get_buffer(), globalUniform.get_offset(), globalUniform.get_size(), 0, 0, 0);
 
         auto instanceBuffer = rendeFrame.allocate_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof(Instance) * aabbs.size());
-        instanceBuffer.update((uint8_t *)instanceData.data(), instanceData.size() * sizeof(Instance), 0);
+        instanceBuffer.update((uint8_t *)instanceData.data(), (uint32_t)instanceData.size() * sizeof(Instance), 0);
 
         std::vector<std::reference_wrapper<const core::Buffer>> buffers;
         auto vert_iter = debugMesh->vertex_buffers.find(std::string("position"));
@@ -292,9 +307,9 @@ namespace MainPass {
         commandBuffer.bind_vertex_buffers(0, buffers, {0, instanceBuffer.get_offset()});
         if (debugMesh->vertex_indices != 0) {
             commandBuffer.bind_index_buffer(*debugMesh->index_buffer, debugMesh->index_offset, debugMesh->index_type);
-            commandBuffer.draw_indexed(debugMesh->vertex_indices, aabbs.size(), 0, 0, 0);
+            commandBuffer.draw_indexed(debugMesh->vertex_indices, (uint32_t)aabbs.size(), 0, 0, 0);
         } else {
-            commandBuffer.draw(debugMesh->vertices_count, aabbs.size(), 0, 0);
+            commandBuffer.draw(debugMesh->vertices_count, (uint32_t)aabbs.size(), 0, 0);
         }
 
     }
