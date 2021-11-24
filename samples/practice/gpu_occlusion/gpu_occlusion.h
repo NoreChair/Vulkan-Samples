@@ -31,6 +31,7 @@ private:
     vkb::Timer m_timer;
     vkb::sg::SubMesh* m_unitCube{nullptr};
     vkb::sg::Camera* m_mainCamera{nullptr};
+    VkFence m_ocFence[3];
 
     struct Profiler {
         bool drawAABB = false;

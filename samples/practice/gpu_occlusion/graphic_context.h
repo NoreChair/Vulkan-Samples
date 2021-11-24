@@ -48,7 +48,7 @@ namespace RenderSetting {
 
     enum ProxyMode :int {
         Full = 0,
-        AABB = 1
+        LOD = 1
     };
 
     extern QueryMode g_queryMode;

@@ -35,6 +35,7 @@ const RenderTarget::CreateFunc gpu_occlusion::swap_chain_create_func = [](Image&
 
 ctpl::thread_pool s_threadPool;
 std::vector<vkb::sg::Mesh*> s_fullMeshes;
+std::vector<vkb::sg::Mesh*> s_lowMeshes;
 
 gpu_occlusion::gpu_occlusion() {
     set_name(k_name);
@@ -130,9 +131,9 @@ void gpu_occlusion::draw_gui() {
     if (ImGui::CollapsingHeader("Render Options")) {
         if (ImGui::BeginChild("Render Option List")) {
             ImGui::Combo("Occlusion Cull Mode", (int*)&g_queryMode, "None\0Immediate\0Delay\0");
-            //if (g_queryMode != 0) {
-            //    ImGui::Combo("Proxy Mode", (int*)&g_proxyMode, "Full\0AABB\0");
-            //}
+            if (g_queryMode != 0) {
+                ImGui::Combo("Proxy Mode", (int*)&g_proxyMode, "Full\0LOD\0");
+            }
 
             ImGui::EndChild();
         }
@@ -213,12 +214,33 @@ void gpu_occlusion::prepare_resources() {
 void gpu_occlusion::prepare_scene() {
     // Extract mesh
     s_fullMeshes.clear();
+    std::vector<int> index;
     const auto meshes = scene->get_components<vkb::sg::Mesh>();
     s_fullMeshes.reserve(meshes.size() / 3);
     for (size_t i = 0; i < meshes.size(); i++) {
         if ((meshes[i]->get_name().find("LOD1") == std::string::npos) && (meshes[i]->get_name().find("LOD2") == std::string::npos)) {
             s_fullMeshes.emplace_back(meshes[i]);
+            index.push_back((int)i);
         }
+    }
+
+    s_lowMeshes.reserve(s_fullMeshes.size());
+    for (size_t i = 0; i < s_fullMeshes.size(); i++) {
+        auto pos = s_fullMeshes[i]->get_name().find("LOD0");
+        if (pos != std::string::npos) {
+            auto iter = std::find_if(meshes.begin() + index[i], meshes.begin() + index[i] + 3, [](sg::Mesh* mesh) { return mesh->get_name().find("LOD2") != std::string::npos; });
+            if (iter == meshes.begin() + index[i] + 3) {
+                iter = std::find_if(meshes.begin() + index[i], meshes.begin() + index[i] + 3, [](sg::Mesh* mesh) { return mesh->get_name().find("LOD1") != std::string::npos; });
+                if (iter != meshes.begin() + index[i] + 3) {
+                    s_lowMeshes.emplace_back(*iter);
+                    continue;
+                }
+            } else {
+                s_lowMeshes.emplace_back(*iter);
+                continue;
+            }
+        }
+        s_lowMeshes.emplace_back(s_fullMeshes[i]);
     }
 
     for (auto mesh : s_fullMeshes) {
@@ -264,8 +286,12 @@ void gpu_occlusion::render(float delta_time) {
     RenderUtils::ExtractPlanes(vulkan_style_projection(m_mainCamera->get_projection()) * m_mainCamera->get_view(), frustum);
 
     RenderUtils::SortedMeshes opaqueNodes;
-    RenderUtils::SortedMeshes transparentNodes;
     RenderUtils::SortedMeshes cullOffNodes;
+    RenderUtils::SortedMeshes transparentNodes;
+
+    RenderUtils::SortedMeshes opaqueProxies;
+    RenderUtils::SortedMeshes cullOffProxies;
+
     sg::Transform &mainCameraRTS = m_mainCamera->get_node()->get_transform();
     glm::mat4 cameraMatrix = mainCameraRTS.get_world_matrix();
     glm::vec3 cameraForward = -glm::vec3(cameraMatrix[0][2], cameraMatrix[1][2], cameraMatrix[2][2]);
@@ -275,12 +301,13 @@ void gpu_occlusion::render(float delta_time) {
     m_profilerData.occlusionVisibleCount = 0;
     m_profilerData.occlusionTestCount = 0;
 
-    std::vector<std::reference_wrapper<const sg::AABB>> opaqueBoundingBoxs;
-    std::vector<std::reference_wrapper<const sg::AABB>> alphaTestBoundingBoxs;
+    std::vector<std::reference_wrapper<const sg::AABB>> opaqueBBoxs;
+    std::vector<std::reference_wrapper<const sg::AABB>> cullOffBBoxs;
 
-    for (auto var : s_fullMeshes) {
-        const auto &bounds = var->get_bounds();
-        for (auto node : var->get_nodes()) {
+    for (int i = 0; i < s_fullMeshes.size(); ++i) {
+        const auto* mesh = s_fullMeshes[i];
+        const auto &bounds = mesh->get_bounds();
+        for (auto node : mesh->get_nodes()) {
             m_profilerData.sceneDrawCount++;
             const auto& aabb = node->get_component<sg::AABB>();
             if (RenderUtils::FrustumAABB(frustum, aabb.get_min(), aabb.get_max())) {
@@ -288,13 +315,20 @@ void gpu_occlusion::render(float delta_time) {
                 glm::vec3 delta = aabb.get_center() - mainCameraRTS.get_world_translation();
                 float     distance = glm::dot(cameraForward, delta);
 
-                for (auto &sub_mesh : node->get_component<sg::Mesh>().get_submeshes()) {
+                assert(mesh->get_submeshes().size() == s_lowMeshes[i]->get_submeshes().size());
+
+                const auto& subMeshes = mesh->get_submeshes();
+                const auto& subProxies = s_fullMeshes[i]->get_submeshes();
+                for (int j = 0; j < subMeshes.size(); ++j) {
+                    auto* sub_mesh = subMeshes[j];
                     if (sub_mesh->get_material()->alpha_mode == vkb::sg::AlphaMode::Opaque) {
                         opaqueNodes.emplace(distance, std::make_pair(node, sub_mesh));
-                        opaqueBoundingBoxs.emplace_back(std::ref(aabb));
+                        opaqueProxies.emplace(distance, std::make_pair(node, subProxies[j]));
+                        opaqueBBoxs.emplace_back(std::ref(aabb));
                     } else if (sub_mesh->get_material()->alpha_mode == vkb::sg::AlphaMode::Mask) {
                         cullOffNodes.emplace(distance, std::make_pair(node, sub_mesh));
-                        alphaTestBoundingBoxs.emplace_back(std::ref(aabb));
+                        cullOffProxies.emplace(distance, std::make_pair(node, subProxies[j]));
+                        cullOffBBoxs.emplace_back(std::ref(aabb));
                     } else {
                         transparentNodes.emplace(distance, std::make_pair(node, sub_mesh));
                     }
@@ -314,12 +348,16 @@ void gpu_occlusion::render(float delta_time) {
         queryCommandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         OcclusionCullPass::BeginPass(*render_context, queryCommandBuffer);
 
+        // TODO : https://developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-29-efficient-occlusion-culling
+        // according previous frame occlusion result, we can test visbile object every few frame, but test invisible object every frame
+        // also, use proxy instead of full mesh can save gpu performance, but it need multiple bbox otherwise lead to flickering
         if (g_proxyMode == RenderSetting::ProxyMode::Full) {
             OcclusionCullPass::DrawModel(*render_context, queryCommandBuffer, m_mainCamera, &opaqueNodes, true);
             OcclusionCullPass::DrawModel(*render_context, queryCommandBuffer, m_mainCamera, &cullOffNodes, true);
-        } else if (g_proxyMode == RenderSetting::ProxyMode::AABB) {
-            OcclusionCullPass::DrawProxy(*render_context, queryCommandBuffer, m_mainCamera, m_unitCube, &opaqueNodes, true);
-            OcclusionCullPass::DrawProxy(*render_context, queryCommandBuffer, m_mainCamera, m_unitCube, &cullOffNodes, true);
+        } else if (g_proxyMode == RenderSetting::ProxyMode::LOD) {
+            //OcclusionCullPass::DrawProxy(*render_context, queryCommandBuffer, m_mainCamera, m_unitCube, &cullOffNodes, true);
+            OcclusionCullPass::DrawModel(*render_context, queryCommandBuffer, m_mainCamera, &opaqueProxies, true);
+            OcclusionCullPass::DrawModel(*render_context, queryCommandBuffer, m_mainCamera, &cullOffProxies, true);
         }
 
         int queryCount = OcclusionCullPass::EndPass(queryCommandBuffer);
@@ -329,6 +367,8 @@ void gpu_occlusion::render(float delta_time) {
         queryCommandBuffer.end();
 
         VkFence fence = render_context->submit(render_context->get_queue(), {&queryCommandBuffer});
+
+        m_ocFence[render_context->get_active_frame_index()] = fence;
 
         Timer time;
         time.start();
@@ -357,6 +397,8 @@ void gpu_occlusion::render(float delta_time) {
                 uint32_t lastFrameQueryCount = (uint32_t)g_visibleNodeMap[lastFrameIndex].size();
                 // TODO : this is no a safe way to get the query result, we can't make sure that previous frame's command all done on gpu, unless we wait fence
                 // It will make a flickering result
+                vkWaitForFences(device->get_handle(), 1, &m_ocFence[lastFrameIndex], true, UINT64_MAX);
+
                 uint32_t* resultPointer = (uint32_t*)g_visibleReadbackBuffer->map();
                 resultPointer += lastFrameIndex * g_maxVisibleQueryCount;
                 m_profilerData.occlusionWaitTime += (float)time.stop() * 1e3f;
@@ -393,8 +435,8 @@ void gpu_occlusion::render(float delta_time) {
     MainPass::DrawAlphaTest(*render_context, commandBuffer, m_mainCamera, &cullOffNodes, scene.get(), true);
 
     if (m_profilerData.drawAABB) {
-        MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, opaqueBoundingBoxs, glm::vec3(0.0, 1.0, 0.0));
-        MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, alphaTestBoundingBoxs, glm::vec3(0.0, 0.0, 1.0));
+        MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, opaqueBBoxs, glm::vec3(0.0, 1.0, 0.0));
+        MainPass::DrawDebugAABB(*render_context, commandBuffer, m_mainCamera, m_unitCube, cullOffBBoxs, glm::vec3(0.0, 0.0, 1.0));
     }
     if (gui) {
         gui->draw(commandBuffer);
