@@ -172,7 +172,7 @@ vec2 ggx_ndf(float ndoth, vec2 roughness)
 vec3 ggx_specular_brdf(float ndotl, float ndotv, float ndoth, float hdotl, float vdoth, float roughness, vec3 specularColor){
     vec3 directSpecular = vec3(0.0, 0.0, 0.0);
 
-    vec3 f = schlick_fresnel(hdotl, specularColor, vec3(1.0));
+    vec3 f = schlick_fresnel(hdotl, specularColor, vec3(0.2));
     if(useDoubleSpecular > 0u){
         float secondRoughness = saturate(log2(roughness) / 8.0 + 1.0);
         vec2 vis = smith_ggx_height_correlated_hammon_approximate_visibility(ndotv, ndotl, vec2(roughness, secondRoughness));
@@ -422,7 +422,7 @@ void main(){
     float vdoth = saturate(dot(view, halfVector));
 
     if(onlySSS > 0u){
-        o_color = texture(sssTexture, v_uvNDC) * lightDirIntensity.w * ndotl;
+        o_color = texture(sssTexture, v_uvNDC);
         return;
     }
 
@@ -435,19 +435,22 @@ void main(){
     vec3 pore = schlick_fresnel(ndotv , vec3(cavity), vec3(1.0));
 
     // direct light
-    vec3 diffuse = albedo.rgb / k_pi;
+    vec3 diffuse = albedo.rgb / k_pi * intensity * ndotl;
     vec3 surfaceColor = albedo.rgb; // instread of metal f0
     vec3 f0 = mix(vec3(0.028), surfaceColor, metalness);
     if(useSSS > 0u){
-        // hack 
-        float sssFactor = step(0.07, to_luminance(albedo.rgb)); 
-        diffuse = mix(diffuse, texture(sssTexture, v_uvNDC).rgb, vec3(sssFactor));
+        // // hack
+        // float lum = to_luminance(albedo.rgb);
+        // float sssFactor = smoothstep(0.0, 0.07, lum);
+        // // hack end
+        // diffuse = mix(diffuse, texture(sssTexture, v_uvNDC).rgb , vec3(sssFactor));
+        diffuse = texture(sssTexture, v_uvNDC).rgb * albedo.rgb * 2.0;
     }
     // approximate : diffuse = diffuse * (vec3(1.0) - f0) * (1.0 - metalness);
-    diffuse = diffuse * (vec3(1.0) - schlick_fresnel(hdotl, f0, vec3(1.0))) * (1.0 - metalness);
+    diffuse = diffuse * (vec3(1.0) - schlick_fresnel(hdotl, f0, vec3(0.2))) * (1.0 - metalness);
 
     // vec3 specular = blinn_phong_specular_brdf(ndotl, ndotv, ndoth, hdotl, vdoth, (1.0 - roughness) * glossScale, f0);
-    vec3 specular = ggx_specular_brdf(ndotl, ndotv, ndoth, hdotl, vdoth, roughness, f0) * pore;
+    vec3 specular = ggx_specular_brdf(ndotl, ndotv, ndoth, hdotl, vdoth, roughness, f0) * pore * ndotl * intensity;
 
     // direct shadow
     vec4 positionSS = shadowVP * vec4(v_posWS, 1.0);
@@ -461,7 +464,7 @@ void main(){
         return;
     }
 
-    vec3 directShading = (diffuse + specular) * lightColor.rgb * intensity * shadow * ndotl;
+    vec3 directShading = (diffuse + specular) * lightColor.rgb  * shadow ;
 
     // indirect light
     float ao = params.r; // TDOO : min(bakeAO, SSAO);
@@ -480,7 +483,7 @@ void main(){
     float specularOcclusion = mix(pow(ao, k_specularPow), 1.0, s);
     vec3 r = -reflect(view, normal);
     vec3 radiance = texture(radianceTexture, r, roughness * 6.0).rgb; // 256 radiance
-    vec3 iblSpecular = schlick_fresnel(hdotl, f0, vec3(1.0)) * radiance;
+    vec3 iblSpecular = schlick_fresnel(hdotl, f0, vec3(0.2)) * radiance;
     vec3 indirectShading = iblDiffuse * (1.0 - metalness) + iblSpecular * pore * specularOcclusion;
 
     vec3 finalShading = directShading + indirectShading;

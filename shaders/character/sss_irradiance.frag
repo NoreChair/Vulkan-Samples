@@ -21,9 +21,10 @@ layout(set = 0, binding = 1) uniform LocalUniform{
 layout(set = 0, binding = 2) uniform sampler2D albedoTexture;
 
 void main(){
-    // float ndotl = dot(normalize(v_normal), -lightDirIntensity.xyz);
-    vec3 diffuse = texture(albedoTexture, v_uv).rgb / 3.14159265358979 * lightColor.rgb;
-    // vec3 diffuse = ndotl / 3.14159265358979 * lightColor.rgb;
+    float ndotl = dot(normalize(v_normal), -lightDirIntensity.xyz);
+    // pre-scatter texture or post-scatter texture?
+    // vec3 diffuse = ndotl * texture(albedoTexture, v_uv).rgb / 3.14159265358979 * lightColor.rgb * lightDirIntensity.w;
+    vec3 diffuse = ndotl / 3.14159265358979 * lightColor.rgb * lightDirIntensity.w * 0.5;
     o_color = vec4(diffuse, 1.0);
     o_depth = vec4(1.0 / gl_FragCoord.w, 0.0, 0.0, 0.0);
 }

@@ -42,7 +42,7 @@ void main(){
     vec2 offset = v_uv - finalWidth;
     for (int i = 0; i < 3; i++) {
         vec3 diffuse = texture(tex1, offset).rgb;
-        weightScale += step(1e-10, diffuse.r) * w[i];
+        weightScale += step(1e-5, diffuse.r) * w[i];
         color.rgb += w[i] * diffuse;
         offset += finalWidth / 3.0;
     }
@@ -50,12 +50,12 @@ void main(){
 
     for (int i = 4; i < 7; i++) {
         vec3 diffuse = texture(tex1, offset).rgb;
-        weightScale += step(1e-10, diffuse.r) * w[i];
+        weightScale += step(1e-5, diffuse.r) * w[i];
         color.rgb += w[i] * diffuse;
         offset += finalWidth / 3.0;
     }
 
-    color *= min(1.0 / (weightScale + 0.382), 2.6178);
+    color *= 1.0 / (weightScale + 0.382);
 
     o_color = color;
 }
