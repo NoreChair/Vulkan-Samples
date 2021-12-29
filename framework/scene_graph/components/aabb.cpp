@@ -70,6 +70,9 @@ void AABB::transform(glm::mat4 &transform)
 {
 	glm::vec3 src_min = min;
 	glm::vec3 src_max = max;
+
+    min = glm::vec3(FLT_MAX);
+    max = glm::vec3(-FLT_MAX);
  	update(transform * glm::vec4(src_min, 1.0f));
 
 	// Update bounding box for the remaining 7 corners of the box
@@ -104,9 +107,9 @@ glm::vec3 AABB::get_max() const
 
 void AABB::reset()
 {
-	min = std::numeric_limits<glm::vec3>::max();
+	min = glm::vec3(FLT_MAX);
 
-	max = std::numeric_limits<glm::vec3>::min();
+	max = -glm::vec3(FLT_MAX);
 }
 
 }        // namespace sg
