@@ -100,8 +100,6 @@ void forward_plus::prepare_light()
 	auto &    sceneAABB = scene->get_root_node().get_component<sg::AABB>();
 	glm::vec3 posScale  = sceneAABB.get_max() - sceneAABB.get_min();
 	glm::vec3 posBias   = sceneAABB.get_min();
-	posBias.y += 1200;
-	posScale.y -= 1400;
 
 	// todo: replace this with MT
 	srand(57495);
@@ -284,10 +282,10 @@ void forward_plus::prepare_shaders()
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
 		    {"light_grid", "forward_plus/light_grid.comp"},
 		    {"screen_shadow", "forward_plus/screen_shadow.comp"},
-			{"adjust_exposure", "forward_plus/AdjustExposure.comp"}, 
-			{"extract_luma", "forward_plus/ExtractLuma.comp"}, 
-			{"gen_histogram", "forward_plus/GenerateHistogram.comp"}, 
-			{"tone_mapping", "forward_plus/ToneMapping.comp"}};
+			{"adjust_exposure", "forward_plus/hdr/AdjustExposure.comp"},
+			{"extract_luma", "forward_plus/hdr/ExtractLuma.comp"},
+			{"gen_histogram", "forward_plus/hdr/GenerateHistogram.comp"},
+			{"tone_mapping", "forward_plus/hdr/ToneMapping.comp"}};
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)

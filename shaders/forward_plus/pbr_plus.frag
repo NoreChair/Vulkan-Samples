@@ -330,9 +330,9 @@ void main(void)
     // Abient
 	// [1] Tempory irradiance to fix dark metals
 	// TODO: add specular irradiance for realistic metals
-	vec3 irradiance    = vec3(0.2);
+	vec3 irradiance    = vec3(0.02);
 	vec3 F             = F_Schlick_Roughness(F0, max(dot(N, V), 0.0), roughness * roughness * roughness * roughness);
 	vec3 ibl_diffuse   = irradiance * base_color.rgb;
-	vec3 ambient_color = ibl_diffuse * shadowAttr;
-	o_color = vec4(ambient_color * 0.3 + light_contribution, base_color.a);
+	vec3 ambient_color = ibl_diffuse;
+	o_color = vec4(ambient_color + light_contribution, base_color.a);
 }
