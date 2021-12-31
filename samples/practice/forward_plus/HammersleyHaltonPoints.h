@@ -14,7 +14,7 @@ void Hammersley(float *result, int n) {
             }
         }
 
-        v = (k + 0.5) / n;
+        v = (k + 0.5f) / n;
         result[pos++] = u;
         result[pos++] = v;
     }
@@ -34,7 +34,7 @@ void Halton(float *result, int n, int p2) {
         }
 
         v = 0;
-        ip = 1.0 / p2;
+        ip = 1.0f / p2;
         // inverse of p2
         for (p = ip, kk = k; kk; p *= ip, kk /= p2) {
             // kk = (int)(kk/p2)
@@ -61,13 +61,13 @@ void SphereHammersley(float *result, int n) {
             }
         }
 
-        t = 2.0 * t - 1.0;
+        t = 2.0f * t - 1.0f;
         // map from [0,1] to [-1,1]
-        phi = (k + 0.5) / n;
+        phi = (k + 0.5f) / n;
         // a slight shift
         phirad = phi * glm::two_pi<float>();
         // map to [0, 2 pi)
-        st = glm::sqrt(1.0 - t * t);
+        st = glm::sqrt(1.0f - t * t);
 
         result[pos++] = st * glm::cos(phirad);
         result[pos++] = st * glm::sin(phirad);
@@ -88,11 +88,11 @@ void SphereHalton(float *result, int n, int p2) {
             }
         }
 
-        t = 2.0 * t - 1.0;
+        t = 2.0f * t - 1.0f;
         // map from [0,1] to [-1,1]
-        st = sqrt(1.0 - t * t);
-        phi = 0;
-        ip = 1.0 / p2;
+        st = sqrt(1.0f - t * t);
+        phi = 0.0f;
+        ip = 1.0f / p2;
 
         for (p = ip, kk = k; kk; p *= ip, kk /= p2) {
             // kk = (int)(kk/p2)
@@ -100,7 +100,7 @@ void SphereHalton(float *result, int n, int p2) {
                 phi += a * p;
             }
         }
-        phirad = phi * 4.0 * glm::pi<float>();
+        phirad = phi * 4.0f * glm::pi<float>();
         // map from [0,0.5] to [0, 2 pi)
         result[pos++] = st * glm::cos(phirad);
         result[pos++] = st * glm::sin(phirad);
