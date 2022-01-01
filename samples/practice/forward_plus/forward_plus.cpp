@@ -277,6 +277,7 @@ void forward_plus::prepare_shaders()
 		    {"pbr_plus", "forward_plus/pbr_plus.vert", "forward_plus/pbr_plus.frag"},
 		    {"screen_base", "forward_plus/screen_base.vert", "forward_plus/screen_base.frag"},
 		    {"debug_draw", "forward_plus/debug_draw.vert", "forward_plus/debug_draw.frag"},
+            {"sky", "forward_plus/sky.vert", "forward_plus/sky.frag"},
 		};
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
@@ -285,7 +286,8 @@ void forward_plus::prepare_shaders()
 			{"adjust_exposure", "forward_plus/hdr/AdjustExposure.comp"},
 			{"extract_luma", "forward_plus/hdr/ExtractLuma.comp"},
 			{"gen_histogram", "forward_plus/hdr/GenerateHistogram.comp"},
-			{"tone_mapping", "forward_plus/hdr/ToneMapping.comp"}};
+			{"tone_mapping", "forward_plus/hdr/ToneMapping.comp"}
+        };
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
@@ -579,6 +581,7 @@ void forward_plus::render(float delta_time)
 		opaquePass->screenShadow = screenShadowImageView.get();
 		opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
 		opaquePass->draw(commandBuffer);
+        opaquePass->draw_sky(commandBuffer, sphere_mesh.get());
 
 		debugDrawPass->draw_sphere = drawLight;
 		debugDrawPass->draw_box    = drawAABB;
@@ -657,13 +660,20 @@ void forward_plus::update(float delta_time)
 
 void forward_plus::draw_gui()
 {
-	gui->show_options_window(
-	    /* body = */ [this]() {
-		    ImGui::Checkbox("Show Depth", &debugDepth);
-		    ImGui::Checkbox("Draw AABB", &drawAABB);
-		    ImGui::Checkbox("Draw Light Outline", &drawLight);
-	    },
-	    /* lines = */ 3);
+    VulkanSample::draw_gui();
+
+    bool windowVisible = ImGui::Begin("Options", nullptr, ImGuiWindowFlags_MenuBar);
+    if (!windowVisible) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Draw Options:");
+    ImGui::Checkbox("Show Depth", &debugDepth);
+    ImGui::Checkbox("Draw AABB", &drawAABB);
+    ImGui::Checkbox("Draw Light Outline", &drawLight);
+
+    ImGui::End();
 }
 
 void forward_plus::get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *opaque_nodes, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *transparent_nodes)

@@ -1,5 +1,6 @@
 #include "opaque_pass.h"
 #include "Utils.h"
+#include "ShaderProgram.h"
 #include "common/vk_initializers.h"
 #include "scene_graph/components/image.h"
 #include "scene_graph/components/material.h"
@@ -25,13 +26,21 @@ void opaque_pass::prepare()
 	defaultDepthState.depth_compare_op   = VK_COMPARE_OP_GREATER_OR_EQUAL;
 	defaultDepthState.depth_write_enable = false;
 	pipeline_state.set_depth_stencil_state(defaultDepthState);
+    sky_pipeline_state.set_depth_stencil_state(defaultDepthState);
+
 	RasterizationState rasterState;
 	rasterState.depth_bias_enable = true;
 	pipeline_state.set_rasterization_state(rasterState);
+
+    rasterState.depth_bias_enable = false;
+    rasterState.cull_mode = VK_CULL_MODE_FRONT_BIT;
+    sky_pipeline_state.set_rasterization_state(rasterState);
+
 	ColorBlendState           defaultColorState;
 	ColorBlendAttachmentState defaultAttaState;
 	defaultColorState.attachments.push_back(defaultAttaState);
 	pipeline_state.set_color_blend_state(defaultColorState);
+    sky_pipeline_state.set_color_blend_state(defaultColorState);
 
 	auto samplerCreateInfo         = initializers::sampler_create_info();
 	samplerCreateInfo.magFilter    = VK_FILTER_LINEAR;
@@ -81,6 +90,43 @@ void opaque_pass::draw(vkb::CommandBuffer &command_buffer)
 			command_buffer.draw(submesh->vertices_count, 1, 0, 0);
 		}
 	}
+}
+
+void opaque_pass::draw_sky(vkb::CommandBuffer & command_buffer, vkb::sg::SubMesh * sphere) {
+    Device &device = render_context.get_device();
+    bind_pipeline_state(command_buffer, sky_pipeline_state);
+
+    auto program = ShaderProgram::Find(std::string("sky"));
+    PipelineLayout &layout = device.get_resource_cache().request_pipeline_layout(program->GetShaderModules());
+    command_buffer.bind_pipeline_layout(layout);
+
+    struct {
+        glm::mat4 viewProj;
+        glm::vec4 sunDir;
+        //glm::vec4 cameraPos;
+        //glm::vec4 projOrigin;
+        //glm::vec4 projPlaneU;
+        //glm::vec4 projPlaneV;
+        //glm::vec4 viewport;
+    }ubo;
+
+    auto &render_frame = get_render_context().get_active_frame();
+    auto  allocation = render_frame.allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(ubo), 0);
+
+    glm::mat4 v = render_camera->get_view();
+    v[3] = glm::vec4(0.0, 0.0, 0.0, 1.0);
+    ubo.viewProj = vkb::vulkan_style_projection(render_camera->get_projection()) * v;
+    ubo.sunDir = sunDirection;
+    //ubo.cameraPos = glm::vec4(transform.get_translation(), 1.0);
+
+    allocation.update(ubo);
+    command_buffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
+
+    if (bind_vertex_input(command_buffer, layout, sphere)) {
+        command_buffer.draw_indexed(sphere->vertex_indices, 1, 0, 0, 0);
+    } else {
+        command_buffer.draw(sphere->vertices_count, 1, 0, 0);
+    }
 }
 
 void opaque_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline)
