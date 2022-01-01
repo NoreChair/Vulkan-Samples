@@ -2,6 +2,10 @@
 precision highp float;
 #extension  GL_NV_compute_shader_derivatives : enable
 
+#ifdef GL_NV_compute_shader_derivatives
+    #define PLANE_BIAS
+#endif
+
 layout(set = 0, binding = 0) uniform Uniforms{
     vec4 renderExtent;
     vec4 shadowExtent;
@@ -18,43 +22,55 @@ layout(set = 0, binding = 3) writeonly uniform highp image2D screenShadow;
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-float RegularGridSample(vec3 shadowPos, vec2 rcpShadowExtent){
-    // regular grid 3 x 3 sampling
-    vec2 kernel[9] = vec2[9](
-        rcpShadowExtent * vec2(-1.0), rcpShadowExtent * vec2(0.0, -1.0), rcpShadowExtent * vec2(1.0, -1.0),
-        rcpShadowExtent * vec2(-1.0, 0.0), rcpShadowExtent * vec2(0.0), rcpShadowExtent * vec2(1.0, 0.0),
-        rcpShadowExtent * vec2(-1.0, 1.0), rcpShadowExtent * vec2(0.0, 1.0), rcpShadowExtent * vec2(1.0)
-    );
+#ifdef PLANE_BIAS
+vec2 plane_shadow_bias(vec3 shadowPos){
+    // for large kernel, is better to use
+    // (delta u, delta v) = (delta x) * (ddx u, ddx v) + (delta y) * (ddy u, ddy v);
+    // (delta z) = (delta x) * (ddx z) + (delta y) * (ddy z);
+    // dest ref z = origin ref z + delta z;
+    // to determine shadow pcfs
+    vec2 dx = dFdx(shadowPos.xy);
+    vec2 dy = dFdy(shadowPos.xy);
+    mat2 correctMatrix = mat2(dy.y, -dy.x, -dx.y, dx.x) * (1.0 / (dx.x * dy.y - dx.y * dy.x));
+    vec2 dZ = vec2(dFdx(shadowPos.z), dFdy(shadowPos.z));
+    vec2 correctOffset = correctMatrix * dZ;
+    return correctOffset;
+}
+#endif
+
+float OptimiazedSample(vec3 shadowPos, vec2 rcpShadowExtent){
+    vec2 uv = shadowPos.xy * shadowExtent.xy;
+    vec2 baseUV = floor(uv + 0.5);
+
+    vec2 st = (uv + 0.5 - baseUV);
+    baseUV -= vec2(0.5);
+    baseUV *= rcpShadowExtent;
 
     float shadowValue = 0.0;
-    float shadowCompareZ = shadowPos.z;
+    vec2 uvw0 = vec2(-2.0) * st + vec2(3.0);
+    vec2 uvw1 = vec2(1.0) + vec2(2.0) * st;
+    vec2 uv0 = (vec2(2.0) - st) / uvw0 - vec2(1.0);
+    vec2 uv1 = st / uvw1 + vec2(1.0);
 
-    for(uint i = 0u; i < 9u; ++i){
-        // for large kernel, is better to use
-        // (delta u, delta v) = (delta x) * (ddx u, ddx v) + (delta y) * (ddy u, ddy v);
-        // (delta z) = (delta x) * (ddx z) + (delta y) * (ddy z);
-        // dest ref z = origin ref z + delta z;
-        // to determine shadow pcfs
-        vec2 shadowUV = shadowPos.xy + kernel[i];
-    #ifdef GL_NV_compute_shader_derivatives
-        vec2 dx = dFdx(shadowPos.xy);
-        vec2 dy = dFdy(shadowPos.xy);
-        mat2 correctMatrix = mat2(dy.y, -dx.y, -dy.x, dx.x) * (1.0 / (dx.x * dy.y - dx.y * dy.x));
-        vec2 correctOffset = correctMatrix * kernel[i];
-        vec2 dZ = vec2(dFdx(shadowCompareZ), dFdy(shadowCompareZ));
-        shadowCompareZ = shadowCompareZ + dot(correctOffset, dZ);
-    #endif
-        shadowValue += textureLod(shadowMap, vec3(shadowUV, shadowCompareZ), 0.0);
-    }
-
-    return shadowValue * 0.1111111111;
+#ifdef PLANE_BIAS
+    vec2 shadowDepthBais = plane_shadow_bias(shadowPos) * rcpShadowExtent;
+    shadowValue += uvw0.x * uvw0.y * textureLod(shadowMap, vec3(baseUV + uv0 * rcpShadowExtent, shadowPos.z + dot(uv0 * rcpShadowExtent, shadowDepthBais)), 0.0);
+    shadowValue += uvw1.x * uvw0.y * textureLod(shadowMap, vec3(baseUV + vec2(uv1.x, uv0.y) * rcpShadowExtent, shadowPos.z + dot(vec2(uv1.x, uv0.y) * rcpShadowExtent, shadowDepthBais)), 0.0);
+    shadowValue += uvw0.x * uvw1.y * textureLod(shadowMap, vec3(baseUV + vec2(uv0.x, uv1.y) * rcpShadowExtent, shadowPos.z + dot(vec2(uv0.x, uv1.y) * rcpShadowExtent, shadowDepthBais)), 0.0);
+    shadowValue += uvw1.x * uvw1.y * textureLod(shadowMap, vec3(baseUV + uv1 * rcpShadowExtent, shadowPos.z + dot(uv1 * rcpShadowExtent, shadowDepthBais)), 0.0);
+#else
+    shadowValue += uvw0.x * uvw0.y * textureLod(shadowMap, vec3(baseUV + uv0 * rcpShadowExtent, shadowPos.z), 0.0);
+    shadowValue += uvw1.x * uvw0.y * textureLod(shadowMap, vec3(baseUV + vec2(uv1.x, uv0.y) * rcpShadowExtent, shadowPos.z), 0.0);
+    shadowValue += uvw0.x * uvw1.y * textureLod(shadowMap, vec3(baseUV + vec2(uv0.x, uv1.y) * rcpShadowExtent, shadowPos.z), 0.0);
+    shadowValue += uvw1.x * uvw1.y * textureLod(shadowMap, vec3(baseUV + uv1 * rcpShadowExtent, shadowPos.z), 0.0);
+#endif
+    return shadowValue / 16.0;
 }
 
 float PercentageCloserFiltering(vec3 shadowPos){
     float pcf = 0.0;
     const float kernelWidth = 1.0f;
-    // TODO : poisson disk sampling
-    pcf = RegularGridSample(shadowPos, shadowExtent.zw * kernelWidth);
+    pcf = OptimiazedSample(shadowPos, shadowExtent.zw * kernelWidth);
     return pcf;
 }
 
