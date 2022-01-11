@@ -12,10 +12,12 @@
 using namespace vkb;
 using namespace vkb::core;
 
+float s_shWeight[28];
+
 void GenTestSH(float* pSh) {
     glm::vec4 colors[6] = {
         glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), // white
-        glm::vec4(0.0f, 0.0f, 0.0f, 1.0f), // black
+        glm::vec4(0.5f, 1.0f, 1.0f, 1.0f), // azure
         glm::vec4(1.0f, 1.0f, 0.0f, 1.0f), // yellow
         glm::vec4(1.0f, 0.0f, 0.0f, 1.0f), // red
         glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), // green
@@ -25,14 +27,15 @@ void GenTestSH(float* pSh) {
     int width, height;
     width = height = 8;
     // +-x, +-y, +-z
-    float* pImageData = new float[width * height * 4];
+    float* pImageData = new float[width * height * 4 * 6];
     float* iter = pImageData;
 
+    int size = width * height;
     for (int j = 0; j < 6; j++) {
         glm::vec4 color = colors[j];
-        for (int i = 0; i < width * height; i++) {
+        for (int i = 0; i < size; i++) {
+            iter = pImageData + ((j * size + i) * 4);
             memcpy(iter, &color, sizeof(float) * 4);
-            iter += 4;
         }
     }
 
@@ -42,7 +45,7 @@ void GenTestSH(float* pSh) {
     delete[] pImageData;
 
     // reorder to RGB<(L1,L0), L2(0~3)>, L2<rgb(4),0.0>
-    float* iter = pSh;
+    iter = pSh;
     for (int i = 0; i < 3; i++) {
         int offset = i * 9;
         *(iter++) = rgbSH[offset + 1]; *(iter++) = rgbSH[offset + 2]; *(iter++) = rgbSH[offset + 3]; *(iter++) = rgbSH[offset + 0];
@@ -51,7 +54,7 @@ void GenTestSH(float* pSh) {
     *(iter++) = rgbSH[8];
     *(iter++) = rgbSH[17];
     *(iter++) = rgbSH[26];
-    *iter     = 0.0f;
+    *iter = 0.0f;
 }
 
 void DrawSHShpere(RenderContext& context, CommandBuffer& commandBuffer, sg::Camera* camera, sg::SubMesh* pSphere, glm::vec4* pSh) {
@@ -61,11 +64,12 @@ void DrawSHShpere(RenderContext& context, CommandBuffer& commandBuffer, sg::Came
     commandBuffer.set_depth_stencil_state(defaultDepthState);
     commandBuffer.set_rasterization_state(defaultRasterState);
 
-    auto program = ShaderProgram::Find(std::string("SHSphere"));
+    auto program = ShaderProgram::Find(std::string("sh_sphere"));
     PipelineLayout &layout = context.get_device().get_resource_cache().request_pipeline_layout(program->GetShaderModules());
     commandBuffer.bind_pipeline_layout(layout);
 
-    struct{
+    struct {
+        glm::mat4 model;
         glm::mat4 viewProj;
         glm::vec4 rSH0;
         glm::vec4 rSH1;
@@ -75,6 +79,8 @@ void DrawSHShpere(RenderContext& context, CommandBuffer& commandBuffer, sg::Came
         glm::vec4 bSH1;
         glm::vec4 rgbSH2;
     } ubo;
+
+    ubo.model = glm::translate(glm::scale(glm::vec3(50.0)), glm::vec3(0.0, 8.0, 0.0));
     ubo.viewProj = vkb::vulkan_style_projection(camera->get_projection()) * camera->get_view();
     ubo.rSH0 = pSh[0]; ubo.rSH1 = pSh[1]; ubo.gSH0 = pSh[2]; ubo.gSH1 = pSh[3];
     ubo.bSH0 = pSh[4]; ubo.bSH1 = pSh[5]; ubo.rgbSH2 = pSh[6];
@@ -126,7 +132,6 @@ void DrawSHShpere(RenderContext& context, CommandBuffer& commandBuffer, sg::Came
     } else {
         commandBuffer.draw(pSphere->vertices_count, 1, 0, 0);
     }
-
 }
 
 const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::Image &&swapchain_image) -> std::unique_ptr<RenderTarget> {
@@ -161,6 +166,7 @@ bool forward_plus::prepare(Platform &platform) {
     //stats->request_stats({ vkb::StatIndex::cpu_cycles,vkb::StatIndex::gpu_cycles });
     gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get());
 
+    GenTestSH(s_shWeight);
     return true;
 }
 
@@ -375,6 +381,7 @@ void forward_plus::prepare_shaders() {
             {"screen_base", "forward_plus/screen_base.vert", "forward_plus/screen_base.frag"},
             {"debug_draw", "forward_plus/debug_draw.vert", "forward_plus/debug_draw.frag"},
             {"sky", "forward_plus/sky.vert", "forward_plus/sky.frag"},
+            {"sh_sphere","forward_plus/test/sh_sphere.vert","forward_plus/test/sh_sphere.frag"}
         };
         std::vector<CProgramSources> computeSourceFiles{
             {"linear_depth", "forward_plus/linear_depth.comp"},
@@ -665,6 +672,7 @@ void forward_plus::render(float delta_time) {
         opaquePass->screenShadow = screenShadowImageView.get();
         opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
         opaquePass->draw(commandBuffer);
+        DrawSHShpere(*render_context, commandBuffer, camera, sphere_mesh.get(), (glm::vec4*)s_shWeight);
         opaquePass->draw_sky(commandBuffer, sphere_mesh.get());
 
         debugDrawPass->draw_sphere = drawLight;

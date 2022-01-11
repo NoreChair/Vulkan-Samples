@@ -110,14 +110,14 @@ void SphereHalton(float *result, int n, int p2) {
 
 void GenerateHimesphereHammersleyPoints(float* result, int32_t n) {
     const float pi = 3.1415926f;
-    float p, t, st, phi, phirad, phirady;
+    float p, t, st, phi, phirad;
     int32_t k, kk, pos;
     for (k = 0, pos = 0; k < n; k++) {
         t = 0;
         for (p = 0.5f, kk = k; kk; p *= 0.5f, kk >>= 1)
             if (kk & 1)		// kk mod 2 == 1
                 t += p;
-        t = 1.0 - t;
+        t = 1.0f - t;
         phi = (k + 0.5f) / n;	// a slight shift
         phirad = phi * 2.0f * pi;	// map to [0, 2 pi)
         st = sqrt(1.0f - t * t);
@@ -132,14 +132,14 @@ void GenerateHimesphereHammersleyPoints(float* result, int32_t n) {
 
 void GenerateHimesphereHammersleyPointsWithCos(float * result, int32_t n) {
     const float pi = 3.1415926f;
-    float p, t, st, phi, phirad, phirady;
+    float p, t, st, phi, phirad;
     int32_t k, kk, pos;
     for (k = 0, pos = 0; k < n; k++) {
         t = 0;
         for (p = 0.5f, kk = k; kk; p *= 0.5f, kk >>= 1)
             if (kk & 1)		// kk mod 2 == 1
                 t += p;
-        t = sqrt(1.0 - t);
+        t = sqrt(1.0f - t);
         phi = (k + 0.5f) / n;	// a slight shift
         phirad = phi * 2.0f * pi;	// map to [0, 2 pi)
         st = sqrt(1.0f - t * t);

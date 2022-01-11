@@ -78,7 +78,7 @@ float SHConstruct3(const glm::vec3& n, const float* pWeight) {
     float x2 = x * x; float y2 = y * y; float z2 = z * z;
 
     const float* w = k_FactorOfSHBasis;
-    float result = w[0];
+    float result = pWeight[1] * w[0];
     result += pWeight[1] * w[1] * y;
     result += pWeight[2] * w[2] * z;
     result += pWeight[3] * w[3] * x;
@@ -127,9 +127,9 @@ void ProjectFromCubeMap(const float* pImageData, const int width, const int heig
             float temp = 1.0f + glm::dot(st, st);
             float weight = 4.0f / (glm::sqrt(temp) * temp);
 
-            uv *= viewPort.xy;
+            uv *= glm::vec2(viewPort.xy);
             glm::vec2 floor = glm::floor(uv);
-            int index = (int)(floor.x * width + floor.y);
+            int index = (int)(floor.y * width + floor.x) + (sampleCountPreFace * i);
             iter += (index - preIndex) * stride;
             preIndex = index;
 
