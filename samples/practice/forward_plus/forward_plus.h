@@ -63,17 +63,6 @@ class forward_plus : public vkb::VulkanSample
 	bool debugDepth{false};
 	bool supportBlit{false};
 
-	std::shared_ptr<vkb::core::Image>     linearDepthImage{nullptr};
-	std::shared_ptr<vkb::core::Image>     screenShadowImage{nullptr};
-	std::shared_ptr<vkb::core::Buffer>    lightBuffer{nullptr};
-	std::shared_ptr<vkb::core::Buffer>    lightGridBuffer{nullptr};
-	std::shared_ptr<vkb::core::Buffer>    lightMaskBuffer{nullptr};
-	std::shared_ptr<vkb::core::Buffer>    postProcessVB{nullptr};
-	std::shared_ptr<vkb::RenderTarget>    offScreenRT{nullptr};
-	std::shared_ptr<vkb::RenderTarget>    shadowMapRT{nullptr};
-	std::shared_ptr<vkb::core::ImageView> linearDepthImageView{nullptr};
-	std::shared_ptr<vkb::core::ImageView> screenShadowImageView{nullptr};
-
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
 	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};
 

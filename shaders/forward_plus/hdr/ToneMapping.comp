@@ -57,9 +57,10 @@ void main(){
     vec3 hdrColor = imageLoad(colorRW, ivec2(dispatchID)).rgb;
     // TODO : bloom
     hdrColor *= exposureBuffer[0];
+    // TODO : hdr display output
+
     // hdr scene refers to display refers
     // hdr to sdr
-    // TODO : hdr display output
     vec3 sdrColor = ToneMapping_Standard(hdrColor);
     imageStore(colorRW, ivec2(dispatchID), vec4(sdrColor, 1.0));
 }

@@ -1,5 +1,6 @@
 #include "linear_depth_pass.h"
 #include "buffer_pool.h"
+#include "GraphicContext.h"
 
 linear_depth_pass::linear_depth_pass(vkb::Device *d, vkb::RenderContext *ctx) :
     compute_pass(d),
@@ -7,11 +8,11 @@ linear_depth_pass::linear_depth_pass(vkb::Device *d, vkb::RenderContext *ctx) :
 {
 }
 
-void linear_depth_pass::set_up(vkb::core::ImageView *src, vkb::core::ImageView *dest, vkb::sg::Camera *camera)
-{
-	scene_depth   = src;
-	linear_depth  = dest;
-	render_camera = camera;
+void linear_depth_pass::dispatch(vkb::CommandBuffer & command_buffer, vkb::core::ImageView* src, vkb::core::ImageView* dest, vkb::sg::Camera * camera) {
+    render_camera = camera;
+    scene_depth = src;
+    linear_depth = dest;
+    dispatch(command_buffer);
 }
 
 void linear_depth_pass::dispatch(vkb::CommandBuffer &command_buffer)

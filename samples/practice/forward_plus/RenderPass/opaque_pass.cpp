@@ -1,6 +1,9 @@
 #include "opaque_pass.h"
+
 #include "Utils.h"
 #include "ShaderProgram.h"
+#include "GraphicContext.h"
+
 #include "common/vk_initializers.h"
 #include "scene_graph/components/image.h"
 #include "scene_graph/components/material.h"
@@ -54,12 +57,10 @@ void opaque_pass::prepare()
 	linear_clamp_sampler           = std::make_shared<core::Sampler>(render_context.get_device(), samplerCreateInfo);
 }
 
-void opaque_pass::set_up(vkb::core::Buffer *light_grid, vkb::core::Buffer *light_data, vkb::sg::Camera *camera, std::multimap<float, std::pair<sg::Node *, sg::SubMesh *>> *submeshs)
-{
-	this->render_camera = camera;
-	light_grid_buffer   = light_grid;
-	light_data_buffer   = light_data;
-	this->draw_meshes   = submeshs;
+void opaque_pass::draw(vkb::CommandBuffer & command_buffer, vkb::sg::Camera * camera, std::multimap<float, std::pair<vkb::sg::Node*, vkb::sg::SubMesh*>>* submeshs) {
+    this->render_camera = camera;
+    this->draw_meshes = submeshs;
+    draw(command_buffer);
 }
 
 void opaque_pass::draw(vkb::CommandBuffer &command_buffer)
@@ -168,8 +169,8 @@ void opaque_pass::bind_descriptor(vkb::CommandBuffer &command_buffer, vkb::Pipel
 	allocation.update(lightInfos);
 	command_buffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 1, 0);
 
-	command_buffer.bind_buffer(*light_data_buffer, 0, light_data_buffer->get_size(), 0, 2, 0);
-	command_buffer.bind_buffer(*light_grid_buffer, 0, light_grid_buffer->get_size(), 0, 3, 0);
+	command_buffer.bind_buffer(*GraphicContext::lightBuffer, 0, GraphicContext::lightBuffer->get_size(), 0, 2, 0);
+    command_buffer.bind_buffer(*GraphicContext::lightGridBuffer, 0, GraphicContext::lightGridBuffer ->get_size(), 0, 3, 0);
 
 	DescriptorSetLayout &descriptorSetLayout = pipeline_layout.get_descriptor_set_layout(1);
 	for (auto &texture : submesh->get_material()->textures)

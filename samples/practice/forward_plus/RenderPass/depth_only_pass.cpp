@@ -49,48 +49,48 @@ void depth_only_pass::set_as_shadow_pipeline()
 	pipeline_state.set_rasterization_state(rasterState);
 }
 
-void depth_only_pass::set_up(vkb::sg::Camera *camera, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *submeshs)
-{
-	render_camera = camera;
-	draw_meshs    = submeshs;
+void depth_only_pass::draw(vkb::CommandBuffer & command_buffer, vkb::sg::Camera * camera, std::multimap<float, std::pair<vkb::sg::Node*, vkb::sg::SubMesh*>>* submeshs) {
+    render_camera = camera;
+    draw_meshs = submeshs;
+    draw(command_buffer);
 }
 
-void depth_only_pass::draw(vkb::CommandBuffer &comman_buffer)
+void depth_only_pass::draw(vkb::CommandBuffer &command_buffer)
 {
 	Device &device = render_context.get_device();
 
 	if (isShadowPass) {
-		comman_buffer.set_depth_bias(2.0f, 0.0f, 2.0f);
+        command_buffer.set_depth_bias(2.0f, 0.0f, 2.0f);
 	}
 
 	// update and bind buffer
-	bind_pipeline_state(comman_buffer, pipeline_state);
+	bind_pipeline_state(command_buffer, pipeline_state);
 	for (auto iter = draw_meshs->begin(); iter != draw_meshs->end(); iter++)
 	{
 		auto node    = iter->second.first;
 		auto submesh = iter->second.second;
-		update_global_uniform_buffers(comman_buffer, node);
+		update_global_uniform_buffers(command_buffer, node);
 		auto &layout = const_cast<PipelineLayout &>(pipeline_state.get_pipeline_layout());
-		comman_buffer.bind_pipeline_layout(layout);
-		if (bind_vertex_input(comman_buffer, submesh))
+		command_buffer.bind_pipeline_layout(layout);
+		if (bind_vertex_input(command_buffer, submesh))
 		{
-			comman_buffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
+			command_buffer.draw_indexed(submesh->vertex_indices, 1, 0, 0, 0);
 		}
 		else
 		{
-			comman_buffer.draw(submesh->vertices_count, 1, 0, 0);
+			command_buffer.draw(submesh->vertices_count, 1, 0, 0);
 		}
 	}
 }
 
-void depth_only_pass::bind_pipeline_state(vkb::CommandBuffer &comman_buffer, vkb::PipelineState &pipeline)
+void depth_only_pass::bind_pipeline_state(vkb::CommandBuffer &command_buffer, vkb::PipelineState &pipeline)
 {
-	comman_buffer.set_color_blend_state(pipeline.get_color_blend_state());
-	comman_buffer.set_depth_stencil_state(pipeline.get_depth_stencil_state());
-	comman_buffer.set_input_assembly_state(pipeline.get_input_assembly_state());
-	comman_buffer.set_rasterization_state(pipeline.get_rasterization_state());
-	comman_buffer.set_viewport_state(pipeline.get_viewport_state());
-	comman_buffer.set_multisample_state(pipeline.get_multisample_state());
+	command_buffer.set_color_blend_state(pipeline.get_color_blend_state());
+	command_buffer.set_depth_stencil_state(pipeline.get_depth_stencil_state());
+	command_buffer.set_input_assembly_state(pipeline.get_input_assembly_state());
+	command_buffer.set_rasterization_state(pipeline.get_rasterization_state());
+	command_buffer.set_viewport_state(pipeline.get_viewport_state());
+	command_buffer.set_multisample_state(pipeline.get_multisample_state());
 }
 
 void depth_only_pass::update_global_uniform_buffers(vkb::CommandBuffer &commandBuffer, vkb::sg::Node *node)

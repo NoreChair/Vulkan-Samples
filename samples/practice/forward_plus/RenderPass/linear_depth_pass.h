@@ -11,7 +11,7 @@ class linear_depth_pass : public compute_pass
 
 	virtual ~linear_depth_pass() = default;
 
-	void set_up(vkb::core::ImageView *src, vkb::core::ImageView *dest, vkb::sg::Camera *camera);
+	void dispatch(vkb::CommandBuffer &command_buffer, vkb::core::ImageView* src, vkb::core::ImageView* dest, vkb::sg::Camera *camera);
 
 	void dispatch(vkb::CommandBuffer &command_buffer) override;
 

@@ -24,6 +24,8 @@ void main(){
     uvec2 dispatchID = min(gl_GlobalInvocationID.xy, uvec2(extent.xy));
     vec2 uv = vec2(dispatchID) * extent.zw;
     vec2 offset = extent.zw * 1.0;
+    // sampler must be clamp to edge
+    // sample 4x4 grid, calc luma average
     vec3 sampleColor0 = texture(sceneColor, uv + vec2(-offset.x, -offset.y)).rgb;
     vec3 sampleColor1 = texture(sceneColor, uv + vec2(-offset.x, offset.y)).rgb;
     vec3 sampleColor2 = texture(sceneColor, uv + vec2(offset.x, -offset.y)).rgb;

@@ -1,17 +1,24 @@
 #include "forward_plus.h"
+
+#include "GraphicContext.h"
 #include "SphericalHarmonic.h"
 #include "ShaderProgram.h"
 #include "Utils.h"
+
 #include "api_vulkan_sample.h"
 #include "gltf_loader.h"
+
 #include "scene_graph/components/material.h"
 #include "scene_graph/components/mesh.h"
 #include "scene_graph/components/pbr_material.h"
 #include "scene_graph/components/sub_mesh.h"
 #include "scene_graph/node.h"
+
 using namespace vkb;
 using namespace vkb::core;
+using namespace GraphicContext;
 
+#ifdef SH_TEST
 float s_shWeight[28];
 
 void GenTestSH(float* pSh) {
@@ -133,6 +140,7 @@ void DrawSHShpere(RenderContext& context, CommandBuffer& commandBuffer, sg::Came
         commandBuffer.draw(pSphere->vertices_count, 1, 0, 0);
     }
 }
+#endif
 
 const RenderTarget::CreateFunc forward_plus::swap_chain_create_func = [](core::Image &&swapchain_image) -> std::unique_ptr<RenderTarget> {
     VkFormat                 depth_format = get_suitable_depth_format(swapchain_image.get_device().get_gpu().get_handle());
@@ -165,8 +173,9 @@ bool forward_plus::prepare(Platform &platform) {
 
     //stats->request_stats({ vkb::StatIndex::cpu_cycles,vkb::StatIndex::gpu_cycles });
     gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get());
-
+#ifdef GenTestSH
     GenTestSH(s_shWeight);
+#endif
     return true;
 }
 
@@ -293,71 +302,47 @@ void forward_plus::prepare_light() {
 }
 
 void forward_plus::prepare_pipelines() {
-    Device & refDevice = *device.get();
     auto &   extent2d = get_render_context().get_surface_extent();
-    uint32_t windowWidth = extent2d.width;
-    uint32_t windowHeight = extent2d.height;
 
-    VkExtent3D extent{windowWidth, windowHeight, 1};
-    VkExtent3D shadowExtent{2048, 2048, 1};
-    // Create Render Image
-    Image depthImage(refDevice, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    Image colorImage(refDevice, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    Image shadowImage(refDevice, shadowExtent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+    GraphicContext::Init(*device.get(), extent2d.width, extent2d.height);
 
-    linearDepthImage = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    linearDepthImageView = std::make_shared<ImageView>(*linearDepthImage, VK_IMAGE_VIEW_TYPE_2D);
-    screenShadowImage = std::make_shared<Image>(refDevice, extent, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    screenShadowImageView = std::make_shared<ImageView>(*screenShadowImage, VK_IMAGE_VIEW_TYPE_2D);
+    ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
+    ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
+    depthPrePass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
+    depthPrePass->prepare();
 
-    std::vector<Image> offScreenImgs;
-    offScreenImgs.emplace_back(std::move(colorImage));
-    offScreenImgs.emplace_back(std::move(depthImage));
-    offScreenRT = std::make_shared<RenderTarget>(std::move(offScreenImgs));
+    vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
+    fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
+    shadowPass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
+    shadowPass->prepare();
+    shadowPass->set_as_shadow_pipeline();
 
-    std::vector<Image> shadowImgs;
-    shadowImgs.emplace_back(std::move(shadowImage));
-    shadowMapRT = std::make_shared<RenderTarget>(std::move(shadowImgs));
+    auto *computeProgram = ShaderProgram::Find(std::string("screen_shadow"));
+    screenShadowPass = std::make_unique<screen_shadow_pass>(device.get(), render_context.get());
+    screenShadowPass->prepare(computeProgram->GetShaderModules());
 
-    {
-        ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
-        ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
-        depthPrePass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
-        depthPrePass->prepare();
+    computeProgram = ShaderProgram::Find(std::string("linear_depth"));
+    linearDepthPass = std::make_unique<linear_depth_pass>(device.get(), render_context.get());
+    linearDepthPass->prepare(computeProgram->GetShaderModules());
 
-        vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
-        fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
-        shadowPass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
-        shadowPass->prepare();
-        shadowPass->set_as_shadow_pipeline();
+    computeProgram = ShaderProgram::Find(std::string("light_grid"));
+    lightGridPass = std::make_unique<light_grid_pass>(device.get(), render_context.get());
+    lightGridPass->prepare(computeProgram->GetShaderModules());
 
-        auto *computeProgram = ShaderProgram::Find(std::string("screen_shadow"));
-        screenShadowPass = std::make_unique<screen_shadow_pass>(device.get(), render_context.get());
-        screenShadowPass->prepare(computeProgram->GetShaderModules());
+    vs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
+    fs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.frag"));
+    showDepthPass = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
+    showDepthPass->prepare();
 
-        computeProgram = ShaderProgram::Find(std::string("linear_depth"));
-        linearDepthPass = std::make_unique<linear_depth_pass>(device.get(), render_context.get());
-        linearDepthPass->prepare(computeProgram->GetShaderModules());
+    vs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
+    fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
+    debugDrawPass = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
+    debugDrawPass->prepare();
 
-        computeProgram = ShaderProgram::Find(std::string("light_grid"));
-        lightGridPass = std::make_unique<light_grid_pass>(device.get(), render_context.get());
-        lightGridPass->prepare(computeProgram->GetShaderModules());
-
-        vs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.vert"));
-        fs = ShaderProgram::FindShaderSource(std::string("forward_plus/screen_base.frag"));
-        showDepthPass = std::make_unique<show_depth_pass>(*render_context, std::move(vs), std::move(fs));
-        showDepthPass->prepare();
-
-        vs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.vert"));
-        fs = ShaderProgram::FindShaderSource(std::string("forward_plus/debug_draw.frag"));
-        debugDrawPass = std::make_unique<debug_draw_pass>(*render_context, std::move(vs), std::move(fs));
-        debugDrawPass->prepare();
-
-        vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
-        fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
-        opaquePass = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), extent2d);
-        opaquePass->prepare();
-    }
+    vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
+    fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
+    opaquePass = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), extent2d);
+    opaquePass->prepare();
 }
 
 void forward_plus::prepare_shaders() {
@@ -529,8 +514,7 @@ void forward_plus::render(float delta_time) {
         auto &frame_buffer = device->get_resource_cache().request_framebuffer(*shadowMapRT, render_pass);
         commandBuffer.begin_render_pass(*shadowMapRT, render_pass, frame_buffer, oneClearValue);
 
-        shadowPass->set_up(light_camera, &shadowNodes);
-        shadowPass->draw(commandBuffer);
+        shadowPass->draw(commandBuffer, light_camera, &shadowNodes);
 
         commandBuffer.end_render_pass();
     }
@@ -550,8 +534,7 @@ void forward_plus::render(float delta_time) {
         auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
         commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, zeroClearValue);
 
-        depthPrePass->set_up(camera, &opaqueNodes);
-        depthPrePass->draw(commandBuffer);
+        depthPrePass->draw(commandBuffer, camera, &opaqueNodes);
 
         commandBuffer.end_render_pass();
     }
@@ -577,8 +560,7 @@ void forward_plus::render(float delta_time) {
         commandBuffer.image_memory_barrier(shadowMapView, barrier);
 
         // linear depth
-        linearDepthPass->set_up(&depthView, linearDepthImageView.get(), camera);
-        linearDepthPass->dispatch(commandBuffer);
+        linearDepthPass->dispatch(commandBuffer, &depthView, linearDepthImageView.get(), camera);
 
         // screen shadow
         screenShadowPass->set_up(&depthView, &shadowMapView, screenShadowImageView.get());
@@ -670,9 +652,10 @@ void forward_plus::render(float delta_time) {
         commandBuffer.begin_render_pass(*offScreenRT, renderPass, frameBuffer, zeroClearValue);
 
         opaquePass->screenShadow = screenShadowImageView.get();
-        opaquePass->set_up(lightGridBuffer.get(), lightBuffer.get(), camera, &opaqueNodes);
-        opaquePass->draw(commandBuffer);
+        opaquePass->draw(commandBuffer, camera, &opaqueNodes);
+#ifdef GenTestSH
         DrawSHShpere(*render_context, commandBuffer, camera, sphere_mesh.get(), (glm::vec4*)s_shWeight);
+#endif
         opaquePass->draw_sky(commandBuffer, sphere_mesh.get());
 
         debugDrawPass->draw_sphere = drawLight;
