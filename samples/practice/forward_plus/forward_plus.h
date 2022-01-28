@@ -43,11 +43,9 @@ class forward_plus : public vkb::VulkanSample
 	void prepare_shaders();
 	void prepare_scene();
 	void prepare_pipelines();
-	void prepare_buffer();
 	void prepare_light();
 
 	void render(float delta_time);
-	void blit_and_present(vkb::CommandBuffer &commandBuffer);
 	void get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *transparent_nodes = nullptr);
 
   private:

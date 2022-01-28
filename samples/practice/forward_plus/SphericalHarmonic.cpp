@@ -1,6 +1,51 @@
 #include "SphericalHarmonic.h"
 #include "HammersleyHaltonPoints.h"
 
+const float k_FactorOfSHBasis[6 * 6] = {
+    // L<sub>0</sub>
+    1.0f / TWO_SQRT_PI,
+    // L<sub>1</sub>
+    -glm::sqrt(3.0f) / TWO_SQRT_PI,
+    glm::sqrt(3.0f) / TWO_SQRT_PI,
+    -glm::sqrt(3.0f) / TWO_SQRT_PI,
+    // L<sub>2</sub>
+    glm::sqrt(15.0f) / TWO_SQRT_PI,
+    -glm::sqrt(15.0f) / TWO_SQRT_PI,
+    glm::sqrt(5.0f) / (2.0f * TWO_SQRT_PI),
+    -glm::sqrt(15.0f) / TWO_SQRT_PI,
+    glm::sqrt(15.0f) / (2.0f * TWO_SQRT_PI),
+    // L<sub>3</sub>
+    -glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
+    glm::sqrt(105.0f) / TWO_SQRT_PI,
+    -glm::sqrt(42.0f) / (4.0f * TWO_SQRT_PI),
+    glm::sqrt(7.0f) / (2.0f * TWO_SQRT_PI),
+    -glm::sqrt(42.0f) / (4.0f * TWO_SQRT_PI),
+    glm::sqrt(105.0f) / (2.0f * TWO_SQRT_PI),
+    -glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
+    // L<sub>4</sub>
+    3.0f * glm::sqrt(35.0f) / (2.0f * TWO_SQRT_PI),
+    -3.0f * glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
+    3.0f * glm::sqrt(5.0f) / (2.0f * TWO_SQRT_PI),
+    -3.0f * glm::sqrt(10.0f) / (4.0f * TWO_SQRT_PI),
+    3.0f / (8.0f * TWO_SQRT_PI),
+    -3.0f * glm::sqrt(10.0f) / (4.0f * TWO_SQRT_PI),
+    3.0f * glm::sqrt(5.0f) / (4.0f * TWO_SQRT_PI),
+    -3.0f * glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
+    3.0f * glm::sqrt(35.0f) / (8.0f * TWO_SQRT_PI),
+    // L<sub>5</sub>
+    -3.0f * glm::sqrt(154.0f) / (16.0f * TWO_SQRT_PI),
+    3.0f * glm::sqrt(385.0f) / (2.0f * TWO_SQRT_PI),
+    -glm::sqrt(770.0f) / (16.0f * TWO_SQRT_PI),
+    glm::sqrt(1155.0f) / (2.0f * TWO_SQRT_PI),
+    -glm::sqrt(165.0f) / (8.0f * TWO_SQRT_PI),
+    glm::sqrt(11.0f) / (8.0f * TWO_SQRT_PI),
+    -glm::sqrt(165.0f) / (8.0f * TWO_SQRT_PI),
+    glm::sqrt(1155.0f) / (4.0f * TWO_SQRT_PI),
+    -glm::sqrt(770.0f) / (16.0f * TWO_SQRT_PI),
+    3.0f * glm::sqrt(385.0f) / (8.0f * TWO_SQRT_PI),
+    -3.0f * glm::sqrt(154.0f) / (16.0f * TWO_SQRT_PI)
+};
+
 // https://www.ppsloan.org/publications/StupidSH36.pdf
 // this only for K factor
 // P factor need `Associated Legendre polynomials`,can and be evaluated using these recurrences P^0<sub>0</sub> = 1
@@ -33,7 +78,7 @@ double SHK(const unsigned int l, const int m) {
 //    pSH[4] = fTmpC * fS1;
 //}
 
-void SHProject3(const glm::vec3& n, float* __restrict pWeight) {
+static void SHProject3(const glm::vec3& n, float* __restrict pWeight) {
     float x = n.x; float y = n.y; float z = n.z;
     float x2 = x * x; float y2 = y * y; float z2 = z * z;
 
@@ -49,7 +94,7 @@ void SHProject3(const glm::vec3& n, float* __restrict pWeight) {
     pWeight[8] = w[8] * (x2 - y2);
 }
 
-void SHProject4(const glm::vec3& n, float* __restrict pWeight) {
+static void SHProject4(const glm::vec3& n, float* __restrict pWeight) {
     float x = n.x; float y = n.y; float z = n.z;
     float x2 = x * x; float y2 = y * y; float z2 = z * z;
 
@@ -73,7 +118,7 @@ void SHProject4(const glm::vec3& n, float* __restrict pWeight) {
     // TODO : L4 , L5
 }
 
-float SHConstruct3(const glm::vec3& n, const float* pWeight) {
+static float SHConstruct3(const glm::vec3& n, const float* pWeight) {
     float x = n.x; float y = n.y; float z = n.z;
     float x2 = x * x; float y2 = y * y; float z2 = z * z;
 
@@ -111,7 +156,7 @@ glm::vec3 CubeFaceToNormal(int face, glm::vec2 st) {
     return glm::vec3(1.0, 0.0, 0.0);
 }
 
-void ProjectFromCubeMap(const float* pImageData, const int width, const int height, const int stride, float* pSH) {
+static void ProjectFromCubeMap(const float* pImageData, const int width, const int height, const int stride, float* pSH) {
     int sampleCountPreFace = width * height;
     int preIndex = 0;
     glm::vec4 viewPort = glm::vec4((float)width, (float)height, 1.0f / width, 1.0f / height);

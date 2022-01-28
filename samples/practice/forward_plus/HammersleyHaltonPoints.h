@@ -2,7 +2,7 @@
 #include "common/glm_common.h"
 
 // Hammersley points on 2d plane with p1 = 2
-void Hammersley(float *result, int n) {
+inline void Hammersley(float *result, int n) {
     float p, u, v;
     int   k, kk, pos;
     for (k = 0, pos = 0; k < n; k++) {
@@ -21,7 +21,7 @@ void Hammersley(float *result, int n) {
 }
 
 // Halton point on 2d plane with p1 = 2
-void Halton(float *result, int n, int p2) {
+inline void Halton(float *result, int n, int p2) {
     float p, u, v, ip;
     int   k, kk, pos, a;
     for (k = 0, pos = 0; k < n; k++) {
@@ -49,7 +49,7 @@ void Halton(float *result, int n, int p2) {
 }
 
 // Hammersley point on sphere with p1 = 2
-void SphereHammersley(float *result, int n) {
+inline void SphereHammersley(float *result, int n) {
     float p, t, st, phi, phirad;
     int   k, kk, pos;
     for (k = 0, pos = 0; k < n; k++) {
@@ -76,7 +76,7 @@ void SphereHammersley(float *result, int n) {
 }
 
 // Halton point on sphere with p1 = 2
-void SphereHalton(float *result, int n, int p2) {
+inline void SphereHalton(float *result, int n, int p2) {
     float p, t, st, phi, phirad, ip;
     int   k, kk, pos, a;
     for (k = 0, pos = 0; k < n; k++) {
@@ -108,7 +108,7 @@ void SphereHalton(float *result, int n, int p2) {
     }
 }
 
-void GenerateHimesphereHammersleyPoints(float* result, int32_t n) {
+inline void GenerateHimesphereHammersleyPoints(float* result, int32_t n) {
     const float pi = 3.1415926f;
     float p, t, st, phi, phirad;
     int32_t k, kk, pos;
@@ -130,7 +130,7 @@ void GenerateHimesphereHammersleyPoints(float* result, int32_t n) {
     }
 }
 
-void GenerateHimesphereHammersleyPointsWithCos(float * result, int32_t n) {
+inline void GenerateHimesphereHammersleyPointsWithCos(float * result, int32_t n) {
     const float pi = 3.1415926f;
     float p, t, st, phi, phirad;
     int32_t k, kk, pos;

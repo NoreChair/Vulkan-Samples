@@ -5,50 +5,7 @@
 #define TWO_SQRT_PI 3.5449077018110320545963349666f //(2.0f * glm::sqrt(PI))
 #endif
 
-const float k_FactorOfSHBasis[6 * 6] = {
-    // L<sub>0</sub>
-    1.0f / TWO_SQRT_PI,
-    // L<sub>1</sub>
-    -glm::sqrt(3.0f) / TWO_SQRT_PI,
-    glm::sqrt(3.0f) / TWO_SQRT_PI,
-    -glm::sqrt(3.0f) / TWO_SQRT_PI,
-    // L<sub>2</sub>
-    glm::sqrt(15.0f) / TWO_SQRT_PI,
-    -glm::sqrt(15.0f) / TWO_SQRT_PI,
-    glm::sqrt(5.0f) / (2.0f * TWO_SQRT_PI),
-    -glm::sqrt(15.0f) / TWO_SQRT_PI,
-    glm::sqrt(15.0f) / (2.0f * TWO_SQRT_PI),
-    // L<sub>3</sub>
-    -glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
-    glm::sqrt(105.0f) / TWO_SQRT_PI,
-    -glm::sqrt(42.0f) / (4.0f * TWO_SQRT_PI),
-    glm::sqrt(7.0f) / (2.0f * TWO_SQRT_PI),
-    -glm::sqrt(42.0f) / (4.0f * TWO_SQRT_PI),
-    glm::sqrt(105.0f) / (2.0f * TWO_SQRT_PI),
-    -glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
-    // L<sub>4</sub>
-    3.0f * glm::sqrt(35.0f) / (2.0f * TWO_SQRT_PI),
-    -3.0f * glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
-    3.0f * glm::sqrt(5.0f) / (2.0f * TWO_SQRT_PI),
-    -3.0f * glm::sqrt(10.0f) / (4.0f * TWO_SQRT_PI),
-    3.0f / (8.0f * TWO_SQRT_PI),
-    -3.0f * glm::sqrt(10.0f) / (4.0f * TWO_SQRT_PI),
-    3.0f * glm::sqrt(5.0f) / (4.0f * TWO_SQRT_PI),
-    -3.0f * glm::sqrt(70.0f) / (4.0f * TWO_SQRT_PI),
-    3.0f * glm::sqrt(35.0f) / (8.0f * TWO_SQRT_PI),
-    // L<sub>5</sub>
-    -3.0f * glm::sqrt(154.0f) / (16.0f * TWO_SQRT_PI),
-    3.0f * glm::sqrt(385.0f) / (2.0f * TWO_SQRT_PI),
-    -glm::sqrt(770.0f) / (16.0f * TWO_SQRT_PI),
-    glm::sqrt(1155.0f) / (2.0f * TWO_SQRT_PI),
-    -glm::sqrt(165.0f) / (8.0f * TWO_SQRT_PI),
-    glm::sqrt(11.0f) / (8.0f * TWO_SQRT_PI),
-    -glm::sqrt(165.0f) / (8.0f * TWO_SQRT_PI),
-    glm::sqrt(1155.0f) / (4.0f * TWO_SQRT_PI),
-    -glm::sqrt(770.0f) / (16.0f * TWO_SQRT_PI),
-    3.0f * glm::sqrt(385.0f) / (8.0f * TWO_SQRT_PI),
-    -3.0f * glm::sqrt(154.0f) / (16.0f * TWO_SQRT_PI)
-};
+extern const float k_FactorOfSHBasis[6 * 6];
 
 void SHProject3(const glm::vec3& n, float* __restrict pWeight);
 

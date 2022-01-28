@@ -165,9 +165,11 @@ bool forward_plus::prepare(Platform &platform) {
         return false;
     }
 
+    auto & extent2d = get_render_context().get_surface_extent();
+    GraphicContext::Init(*device.get(), extent2d.width, extent2d.height);
+
     prepare_shaders();
     prepare_pipelines();
-    prepare_buffer();
     prepare_scene();
     prepare_light();
 
@@ -182,7 +184,7 @@ bool forward_plus::prepare(Platform &platform) {
 void forward_plus::prepare_render_context() {
     // so we can just copy offscreen image to swap chain image
     auto &properties = render_context->get_swapchain().get_properties();
-    properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    //properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     render_context->prepare(1, swap_chain_create_func);
 }
 
@@ -193,28 +195,10 @@ const std::vector<const char *> forward_plus::get_validation_layers() {
 
 void forward_plus::request_gpu_features(vkb::PhysicalDevice &gpu) {
     VulkanSample::request_gpu_features(gpu);
-    VkFormatFeatureFlags flags = gpu.get_format_properties(VK_FORMAT_R8G8B8A8_SRGB).optimalTilingFeatures;
-    supportBlit = (flags & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0;
-    supportBlit = supportBlit && (flags & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
-    assert(supportBlit);
 }
 
 void forward_plus::resize(const uint32_t width, const uint32_t height) {
     VulkanSample::resize(width, height);
-}
-
-void forward_plus::prepare_buffer() {
-    Device &refDevice = *device.get();
-    auto &  extent2d = get_render_context().get_surface_extent();
-    int     tileCount = (int)(glm::ceil(extent2d.height / 16.0f) * glm::ceil(extent2d.width / 16.0f));
-
-    lightBuffer = std::make_shared<Buffer>(refDevice, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
-    lightGridBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * (MAX_LIGHTS_COUNT + 4) * tileCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    //lightMaskBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * tileCount * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    postProcessVB = std::make_shared<Buffer>(refDevice, sizeof(float) * 9, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-    float fullScreenTriangle[] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
-    postProcessVB->update(&fullScreenTriangle, sizeof(float) * 9);
 }
 
 void forward_plus::prepare_light() {
@@ -302,10 +286,6 @@ void forward_plus::prepare_light() {
 }
 
 void forward_plus::prepare_pipelines() {
-    auto &   extent2d = get_render_context().get_surface_extent();
-
-    GraphicContext::Init(*device.get(), extent2d.width, extent2d.height);
-
     ShaderSource vs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.vert"));
     ShaderSource fs = ShaderProgram::FindShaderSource(std::string("forward_plus/depth_only.frag"));
     depthPrePass = std::make_unique<depth_only_pass>(*render_context, std::move(vs), std::move(fs));
@@ -341,7 +321,7 @@ void forward_plus::prepare_pipelines() {
 
     vs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.vert"));
     fs = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
-    opaquePass = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), extent2d);
+    opaquePass = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), get_render_context().get_surface_extent());
     opaquePass->prepare();
 }
 
@@ -465,7 +445,7 @@ void forward_plus::prepare_scene() {
     light_node->set_component(*direct_light_camera);
 
     light_camera = direct_light_camera.get();
-    glm::vec2 shadowMapExtent = glm::vec2(shadowMapRT->get_extent().width, shadowMapRT->get_extent().height);
+    glm::vec2 shadowMapExtent = glm::vec2(shadowImage->get_extent().width, shadowImage->get_extent().height);
     (*direct_light)->set_properties(sunLight);
     light_camera->set_up(sunLight.direction, sceneAABB->get_center(), glm::vec3(2500, 2500, 2500), shadowMapExtent, 16);
     scene->add_component(std::move(direct_light_camera));
@@ -500,8 +480,7 @@ void forward_plus::render(float delta_time) {
     commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
     {
-        auto &     shadowImage = shadowMapRT->get_views()[0].get_image();
-        VkExtent2D shadowExtent{shadowImage.get_extent().width, shadowImage.get_extent().height};
+        VkExtent2D shadowExtent{shadowImage->get_extent().width, shadowImage->get_extent().height};
         set_viewport_and_scissor(commandBuffer, shadowExtent);
 
         std::vector<LoadStoreInfo> loadStoreInfos;
@@ -510,9 +489,15 @@ void forward_plus::render(float delta_time) {
         std::vector<SubpassInfo> subPassInfos;
         subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
-        auto &render_pass = device->get_resource_cache().request_render_pass(shadowMapRT->get_attachments(), loadStoreInfos, subPassInfos);
-        auto &frame_buffer = device->get_resource_cache().request_framebuffer(*shadowMapRT, render_pass);
-        commandBuffer.begin_render_pass(*shadowMapRT, render_pass, frame_buffer, oneClearValue);
+        std::vector<Attachment> attachments;
+        attachments.emplace_back(Attachment{shadowImageView->get_format(),shadowImage->get_sample_count(), shadowImage->get_usage()});
+
+        std::vector<ImageView*> imageViews;
+        imageViews.push_back(shadowImageView.get());
+
+        auto &render_pass = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
+        auto &frame_buffer = device->get_resource_cache().request_framebuffer(imageViews, render_pass);
+        commandBuffer.begin_render_pass(shadowExtent, render_pass, frame_buffer, oneClearValue);
 
         shadowPass->draw(commandBuffer, light_camera, &shadowNodes);
 
@@ -530,17 +515,23 @@ void forward_plus::render(float delta_time) {
         std::vector<SubpassInfo> subPassInfos;
         subPassInfos.emplace_back(SubpassInfo{{}, {}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
-        auto &render_pass = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
-        auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
-        commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, zeroClearValue);
+        std::vector<Attachment> attachments;
+        attachments.emplace_back(Attachment{sceneDepthImageView->get_format(),sceneDepthImage->get_sample_count(), sceneDepthImage->get_usage()});
+
+        std::vector<ImageView*> imageViews;
+        imageViews.push_back(sceneDepthImageView.get());
+
+        auto &render_pass = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
+        auto &frame_buffer = device->get_resource_cache().request_framebuffer(imageViews, render_pass);
+        commandBuffer.begin_render_pass(extent, render_pass, frame_buffer, zeroClearValue);
 
         depthPrePass->draw(commandBuffer, camera, &opaqueNodes);
 
         commandBuffer.end_render_pass();
     }
 
-    ImageView &depthView = const_cast<ImageView &>(offScreenRT->get_views()[1]);
-    ImageView &shadowMapView = const_cast<ImageView &>(shadowMapRT->get_views()[0]);
+    ImageView &depthView = *sceneDepthImageView;
+    ImageView &shadowMapView = *shadowImageView;
     {
         vkb::ImageMemoryBarrier barrier{};
         barrier.src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -617,28 +608,9 @@ void forward_plus::render(float delta_time) {
         commandBuffer.image_memory_barrier(depthView, barrier);
     }
 
-    if (debugDepth) {
-        // show linear depth pass
-        std::vector<LoadStoreInfo> loadStoreInfos;
-        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
-
-        std::vector<SubpassInfo> subPassInfos;
-        subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
-
-        auto &render_pass = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
-        auto &frame_buffer = device->get_resource_cache().request_framebuffer(*offScreenRT, render_pass);
-
-        commandBuffer.begin_render_pass(*offScreenRT, render_pass, frame_buffer, zeroClearValue);
-        //showDepthPass->set_up(postProcessVB.get(), &shadowMapView);
-        //showDepthPass->set_up(postProcessVB.get(), linearDepthImageView.get());
-        showDepthPass->set_up(postProcessVB.get(), screenShadowImageView.get());
-        showDepthPass->draw(commandBuffer);
-
-        gui->draw(commandBuffer);
-
-        commandBuffer.end_render_pass();
-    } else {
+    auto& swapchainView = render_context->get_active_frame().get_render_target().get_views()[0];
+    auto& swapchain = swapchainView.get_image();
+    {
         std::vector<LoadStoreInfo> loadStoreInfos;
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE});
@@ -646,10 +618,18 @@ void forward_plus::render(float delta_time) {
         std::vector<SubpassInfo> subPassInfos;
         subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
-        auto &renderPass = device->get_resource_cache().request_render_pass(offScreenRT->get_attachments(), loadStoreInfos, subPassInfos);
-        auto &frameBuffer = device->get_resource_cache().request_framebuffer(*offScreenRT, renderPass);
+        std::vector<Attachment> attachments;
+        attachments.emplace_back(Attachment{hdrColorImageView->get_format(), hdrColorImage->get_sample_count(), hdrColorImage->get_usage()});
+        attachments.emplace_back(Attachment{sceneDepthImageView->get_format(),sceneDepthImage->get_sample_count(), sceneDepthImage->get_usage()});
 
-        commandBuffer.begin_render_pass(*offScreenRT, renderPass, frameBuffer, zeroClearValue);
+        std::vector<ImageView*> imageViews;
+        imageViews.push_back(hdrColorImageView.get());
+        imageViews.push_back(sceneDepthImageView.get());
+
+        auto &renderPass = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
+        auto &frameBuffer = device->get_resource_cache().request_framebuffer(imageViews, renderPass);
+
+        commandBuffer.begin_render_pass(extent, renderPass, frameBuffer, zeroClearValue);
 
         opaquePass->screenShadow = screenShadowImageView.get();
         opaquePass->draw(commandBuffer, camera, &opaqueNodes);
@@ -658,71 +638,22 @@ void forward_plus::render(float delta_time) {
 #endif
         opaquePass->draw_sky(commandBuffer, sphere_mesh.get());
 
-        debugDrawPass->draw_sphere = drawLight;
-        debugDrawPass->draw_box = drawAABB;
-        debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get(), camera);
-        debugDrawPass->draw(commandBuffer);
-
-        gui->draw(commandBuffer);
-
         commandBuffer.end_render_pass();
     }
 
-    blit_and_present(commandBuffer);
+
+    // TODO : convert hdr to sdr
+
+    //debugDrawPass->draw_sphere = drawLight;
+    //debugDrawPass->draw_box = drawAABB;
+    //debugDrawPass->set_up(sphere_mesh.get(), cube_mesh.get(), camera);
+    //debugDrawPass->draw(commandBuffer);
+
+
+    //gui->draw(commandBuffer);
+
     commandBuffer.end();
     context.submit(commandBuffer);
-}
-
-void forward_plus::blit_and_present(vkb::CommandBuffer &commandBuffer) {
-    auto &colorImageView = offScreenRT->get_views()[0];
-    auto &swapChainView = render_context->get_active_frame().get_render_target().get_views()[0];
-
-    ImageMemoryBarrier barrier{};
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.dst_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barrier.new_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    commandBuffer.image_memory_barrier(colorImageView, barrier);
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.src_access_mask = 0;
-    barrier.dst_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.new_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    commandBuffer.image_memory_barrier(swapChainView, barrier);
-
-    VkExtent3D  colorImageExtent = colorImageView.get_image().get_extent();
-    VkExtent3D  swapChainExtent = swapChainView.get_image().get_extent();
-    VkImageBlit blit{};
-    blit.srcOffsets[0] = VkOffset3D{0, 0, 0};
-    blit.srcOffsets[1] = VkOffset3D{(int32_t)colorImageExtent.width, (int32_t)colorImageExtent.height, 0};
-    blit.dstOffsets[0] = VkOffset3D{0, 0, 0};
-    blit.dstOffsets[1] = VkOffset3D{(int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 0};
-    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.srcSubresource.layerCount = 1;
-    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.dstSubresource.layerCount = 1;
-
-    commandBuffer.blit_image(colorImageView.get_image(), swapChainView.get_image(), {blit});
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    barrier.src_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.old_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    commandBuffer.image_memory_barrier(colorImageView, barrier);
-
-    barrier.src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    barrier.dst_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    barrier.src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dst_access_mask = 0;
-    barrier.old_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.new_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    commandBuffer.image_memory_barrier(swapChainView, barrier);
 }
 
 void forward_plus::update(float delta_time) {

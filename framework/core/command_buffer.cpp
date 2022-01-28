@@ -162,11 +162,6 @@ void CommandBuffer::flush(VkPipelineBindPoint pipeline_bind_point)
 
 void CommandBuffer::begin_render_pass(const RenderTarget &render_target, const std::vector<LoadStoreInfo> &load_store_infos, const std::vector<VkClearValue> &clear_values, const std::vector<std::unique_ptr<Subpass>> &subpasses, VkSubpassContents contents)
 {
-	// Reset state
-	pipeline_state.reset();
-	resource_binding_state.reset();
-	descriptor_set_layout_binding_state.clear();
-
 	auto &render_pass = get_render_pass(render_target, load_store_infos, subpasses);
 	auto &framebuffer = get_device().get_resource_cache().request_framebuffer(render_target, render_pass);
 
@@ -212,6 +207,11 @@ void CommandBuffer::begin_render_pass(const RenderTarget &render_target, const R
 }
 
 void CommandBuffer::begin_render_pass(const VkExtent2D & extent, const RenderPass & render_pass, const Framebuffer & framebuffer, const std::vector<VkClearValue>& clear_values, VkSubpassContents contents) {
+    // Reset state
+    pipeline_state.reset();
+    resource_binding_state.reset();
+    descriptor_set_layout_binding_state.clear();
+
     current_render_pass.render_pass = &render_pass;
     current_render_pass.framebuffer = &framebuffer;
 
