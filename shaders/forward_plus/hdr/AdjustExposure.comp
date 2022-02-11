@@ -2,6 +2,7 @@
 precision highp float;
 
 layout(set = 0, binding = 0) uniform Uniforms{
+    vec4 extent;
     float targetLuma;
     float adaptationRate;
     float minExposure;
@@ -9,14 +10,14 @@ layout(set = 0, binding = 0) uniform Uniforms{
     uint pixelCount;
 };
 
-layout(set = 0, std430, binding = 1) readonly buffer Histogram{
-    uint histogram[];
-};
-
-layout(set = 0, std430, binding = 2) buffer ExposureBuffer{
+layout(set = 0, std430, binding = 1) buffer ExposureBuffer{
     // from 0 to the end
     // exposure, 1.0/exposure, exposure, averageLuma, MinLog, MaxLog, range, rcpRange
     float exposureBuffer[];
+};
+
+layout(set = 0, std430, binding = 2) readonly buffer Histogram{
+    uint histogram[];
 };
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
@@ -42,14 +43,14 @@ void main(){
     float rcpLogRange = exposureBuffer[7];
 
     float averageLogLuma = accumWeight / float(max((pixelCount - histogram[0]), 1u)) - 1.0;
-    // Photographic Tone Reproduction for Digital Images
+    // <Photographic Tone Reproduction for Digital Images>
     // equation 1
     float averageLuma = exp2(averageLogLuma / 254.0 * logRange + minLog);
     float targetExposure = targetLuma / averageLuma;
 
     float exposure = exposureBuffer[0];
     exposure = mix(exposure, targetExposure, adaptationRate);
-    exposure = clamp(exposure, minLog, maxLog);
+    exposure = clamp(exposure, minExposure, maxExposure);
 
     if(threadIndex == 0u){
         exposureBuffer[0] = exposure;

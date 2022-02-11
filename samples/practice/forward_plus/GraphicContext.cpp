@@ -27,6 +27,8 @@ namespace GraphicContext {
     std::shared_ptr<vkb::core::ImageView> screenShadowImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> lumaResultImageView{nullptr};
 
+    std::shared_ptr<vkb::core::Sampler>   linearClampSampler{nullptr};
+
     void Init(vkb::Device & device, int width, int height) {
         VkExtent3D extent{width, height, 1};
         VkExtent3D shadowExtent{2048, 2048, 1};
@@ -51,7 +53,6 @@ namespace GraphicContext {
         lumaResultImage = std::make_shared<Image>(device, extent, VK_FORMAT_R8_UINT, VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         lumaResultImageView = std::make_shared<ImageView>(*lumaResultImage, VK_IMAGE_VIEW_TYPE_2D);
 
-
         int tileCount = (int)(glm::ceil(height / 16.0f) * glm::ceil(width / 16.0f));
 
         lightBuffer = std::make_shared<Buffer>(device, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -59,7 +60,24 @@ namespace GraphicContext {
         //lightMaskBuffer = std::make_shared<Buffer>(refDevice, sizeof(uint32_t) * tileCount * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         postProcessVB = std::make_shared<Buffer>(device, sizeof(float) * 9, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
 
+        float exposureParams[8] = {1.0f, 1.0f, 1.0f, 0.0f, -8.0f, 8.0f, 16.0f, 1.0f/16.0f};
+
+        exposureBuffer = std::make_shared<Buffer>(device, sizeof(float) * 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
+        exposureBuffer->update((void*)exposureParams, sizeof(exposureParams));
+        lumaHistogram = std::make_shared<Buffer>(device, sizeof(float) * 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+
         float fullScreenTriangle[] = {-1.0, -1.0, 0.0, -1.0, 3.0, 0.0, 3.0, -1.0, 0.0};
         postProcessVB->update(&fullScreenTriangle, sizeof(float) * 9);
+
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.minLod = 0;
+        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+        linearClampSampler = std::make_unique<vkb::core::Sampler>(device, samplerInfo);
     }
 }

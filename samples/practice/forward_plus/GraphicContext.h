@@ -3,6 +3,7 @@
 #include "core/device.h"
 #include "core/image.h"
 #include "core/buffer.h"
+#include "core/sampler.h"
 
 namespace GraphicContext{
     extern std::shared_ptr<vkb::core::Image>     hdrColorImage;
@@ -26,5 +27,6 @@ namespace GraphicContext{
     extern std::shared_ptr<vkb::core::ImageView> screenShadowImageView;
     extern std::shared_ptr<vkb::core::ImageView> lumaResultImageView;
 
+    extern std::shared_ptr<vkb::core::Sampler>   linearClampSampler;
     void Init(vkb::Device & device, int width, int height);
 }
