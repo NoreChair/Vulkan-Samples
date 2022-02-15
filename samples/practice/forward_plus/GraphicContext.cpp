@@ -33,7 +33,7 @@ namespace GraphicContext {
         VkExtent3D extent{width, height, 1};
         VkExtent3D shadowExtent{2048, 2048, 1};
 
-        VkFormat hdrColorFormat = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        VkFormat hdrColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
         assert(device.is_image_format_supported(hdrColorFormat));
         // Create Render Image
 

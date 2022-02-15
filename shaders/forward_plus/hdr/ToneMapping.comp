@@ -9,7 +9,7 @@ layout(set = 0, binding = 0) uniform Uniforms{
     float maxExposure;
     uint pixelCount;};
 
-layout(set = 0, std430, binding = 1) buffer ExposureBuffer{
+layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer{
     // from 0 to the end
     // exposure, 1.0/exposure, exposure, averageLuma, MinLog, MaxLog, range, rcpRange
     float exposureBuffer[];

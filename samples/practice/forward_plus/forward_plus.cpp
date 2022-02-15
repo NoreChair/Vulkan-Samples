@@ -509,7 +509,6 @@ void forward_plus::render(float delta_time) {
     // depth pre pass
     {
         std::vector<LoadStoreInfo> loadStoreInfos;
-        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE});
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
 
         std::vector<SubpassInfo> subPassInfos;
@@ -523,7 +522,7 @@ void forward_plus::render(float delta_time) {
 
         auto &render_pass = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
         auto &frame_buffer = device->get_resource_cache().request_framebuffer(imageViews, render_pass);
-        commandBuffer.begin_render_pass(extent, render_pass, frame_buffer, zeroClearValue);
+        commandBuffer.begin_render_pass(extent, render_pass, frame_buffer, oneClearValue);
 
         depthPrePass->draw(commandBuffer, camera, &opaqueNodes);
 
@@ -534,7 +533,7 @@ void forward_plus::render(float delta_time) {
     ImageView &shadowMapView = *shadowImageView;
     {
         vkb::ImageMemoryBarrier barrier{};
-        barrier.src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         barrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
         barrier.new_layout = VK_IMAGE_LAYOUT_GENERAL;
@@ -546,7 +545,7 @@ void forward_plus::render(float delta_time) {
         barrier.src_access_mask = 0;
         barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
         barrier.old_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         commandBuffer.image_memory_barrier(depthView, barrier);
         commandBuffer.image_memory_barrier(shadowMapView, barrier);
 
@@ -569,7 +568,7 @@ void forward_plus::render(float delta_time) {
         commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
 
         BufferMemoryBarrier bufferBarrier{};
-        bufferBarrier.src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        bufferBarrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         bufferBarrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         bufferBarrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
         bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -603,7 +602,7 @@ void forward_plus::render(float delta_time) {
         barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
         barrier.dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        barrier.old_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        barrier.old_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         barrier.new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         commandBuffer.image_memory_barrier(depthView, barrier);
     }
@@ -611,7 +610,7 @@ void forward_plus::render(float delta_time) {
     {
         std::vector<LoadStoreInfo> loadStoreInfos;
         loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
-        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE});
+        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
 
         std::vector<SubpassInfo> subPassInfos;
         subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
@@ -773,7 +772,7 @@ void forward_plus::render(float delta_time) {
         // Presentation
         ImageMemoryBarrier barrier{};
         barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        barrier.dst_stage_mask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
         barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         barrier.dst_access_mask = 0;
         barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
