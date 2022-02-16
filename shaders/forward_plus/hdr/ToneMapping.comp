@@ -15,8 +15,8 @@ layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer{
     float exposureBuffer[];
 };
 
-layout(set = 0, binding = 2) uniform sampler2D sceneColor
-layout(set = 0, binding = 3) writeonly uniform highp image2D displayImage;
+layout(set = 0, rgba16f, binding = 2) readonly uniform image2D sceneColor;
+layout(set = 0, rgba8, binding = 3) writeonly uniform highp image2D displayImage;
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -60,7 +60,7 @@ float RGBToLuminance(vec3 rgb){
 
 void main(){
     uvec2 dispatchID = min(gl_GlobalInvocationID.xy, uvec2(extent.xy));
-    vec3 hdrColor = imageLoad(colorRW, ivec2(dispatchID)).rgb;
+    vec3 hdrColor = imageLoad(sceneColor, ivec2(dispatchID)).rgb;
     // TODO : bloom
     hdrColor *= exposureBuffer[0];
     // TODO : hdr display output
