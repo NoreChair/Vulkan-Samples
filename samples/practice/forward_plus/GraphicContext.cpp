@@ -6,6 +6,7 @@ using namespace vkb::core;
 
 namespace GraphicContext {
 
+    std::shared_ptr<vkb::core::Image>     sdrColorImage{nullptr};
     std::shared_ptr<vkb::core::Image>     hdrColorImage{nullptr};
     std::shared_ptr<vkb::core::Image>     sceneDepthImage{nullptr};
     std::shared_ptr<vkb::core::Image>     shadowImage{nullptr};
@@ -20,6 +21,7 @@ namespace GraphicContext {
     std::shared_ptr<vkb::core::Buffer>    exposureBuffer{nullptr};
     std::shared_ptr<vkb::core::Buffer>    lumaHistogram{nullptr};
 
+    std::shared_ptr<vkb::core::ImageView> sdrColorImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> hdrColorImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> sceneDepthImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> shadowImageView{nullptr};
@@ -37,9 +39,13 @@ namespace GraphicContext {
         assert(device.is_image_format_supported(hdrColorFormat));
         // Create Render Image
 
+	    //sdrColorImageView = std::make_shared<ImageView>(*sdrColorImage, VK_IMAGE_VIEW_TYPE_2D);
+        // sdrColorImage = std::make_shared<Image>(device, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+
         hdrColorImage = std::make_shared<Image>(device, extent, hdrColorFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         sceneDepthImage = std::make_shared<Image>(device, extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         shadowImage = std::make_shared<Image>(device, shadowExtent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+
         hdrColorImageView = std::make_shared<ImageView>(*hdrColorImage, VK_IMAGE_VIEW_TYPE_2D);
         sceneDepthImageView = std::make_shared<ImageView>(*sceneDepthImage, VK_IMAGE_VIEW_TYPE_2D);
         shadowImageView = std::make_shared<ImageView>(*shadowImage, VK_IMAGE_VIEW_TYPE_2D);
@@ -79,5 +85,32 @@ namespace GraphicContext {
         samplerInfo.minLod = 0;
         samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
         linearClampSampler = std::make_unique<vkb::core::Sampler>(device, samplerInfo);
+    }
+
+    void Release() {
+        sdrColorImage.reset();
+        hdrColorImage.reset();
+        sceneDepthImage.reset();
+        shadowImage.reset();
+        linearDepthImage.reset();
+        screenShadowImage.reset();
+        lumaResultImage.reset();
+
+        lightBuffer.reset();
+        lightGridBuffer.reset();
+        lightMaskBuffer.reset();
+        postProcessVB.reset();
+        exposureBuffer.reset();
+        lumaHistogram.reset();
+
+        sdrColorImageView.reset();
+        hdrColorImageView.reset();
+        sceneDepthImageView.reset();
+        shadowImageView.reset();
+        linearDepthImageView.reset();
+        screenShadowImageView.reset();
+        lumaResultImageView.reset();
+
+	    linearClampSampler.reset();
     }
 }

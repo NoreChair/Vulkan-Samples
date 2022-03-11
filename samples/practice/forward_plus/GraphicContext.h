@@ -6,6 +6,7 @@
 #include "core/sampler.h"
 
 namespace GraphicContext{
+    extern std::shared_ptr<vkb::core::Image>     sdrColorImage;
     extern std::shared_ptr<vkb::core::Image>     hdrColorImage;
     extern std::shared_ptr<vkb::core::Image>     sceneDepthImage;
     extern std::shared_ptr<vkb::core::Image>     shadowImage;
@@ -20,6 +21,7 @@ namespace GraphicContext{
     extern std::shared_ptr<vkb::core::Buffer>    exposureBuffer;
     extern std::shared_ptr<vkb::core::Buffer>    lumaHistogram;
 
+    extern std::shared_ptr<vkb::core::ImageView> sdrColorImageView;
     extern std::shared_ptr<vkb::core::ImageView> hdrColorImageView;
     extern std::shared_ptr<vkb::core::ImageView> sceneDepthImageView;
     extern std::shared_ptr<vkb::core::ImageView> shadowImageView;
@@ -29,4 +31,6 @@ namespace GraphicContext{
 
     extern std::shared_ptr<vkb::core::Sampler>   linearClampSampler;
     void Init(vkb::Device & device, int width, int height);
+
+    void Release();
 }

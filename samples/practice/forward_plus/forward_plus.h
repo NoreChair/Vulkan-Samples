@@ -37,6 +37,7 @@ class forward_plus : public vkb::VulkanSample
 	virtual void update(float delta_time) override;
 	virtual void input_event(const vkb::InputEvent &input_event) override;
 	virtual void draw_gui();
+	virtual void finish() override;
 
 	virtual const std::vector<const char *> get_validation_layers() override;
 
@@ -45,8 +46,12 @@ class forward_plus : public vkb::VulkanSample
 	void prepare_pipelines();
 	void prepare_light();
 
+    void process_shadow(vkb::CommandBuffer& commandBuffer);
+    void process_light_buffer(vkb::CommandBuffer& commandBuffer);
+    void process_HDR(vkb::CommandBuffer& commandBuffer);
 	void render(float delta_time);
 	void get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *transparent_nodes = nullptr);
+	void full_screen_draw(vkb::CommandBuffer &command_buffer, vkb::core::ImageView &target, std::function<void(vkb::CommandBuffer &, vkb::RenderContext &)> body);
 
   private:
 	const std::string k_title = "Vulkan Example";
@@ -60,6 +65,8 @@ class forward_plus : public vkb::VulkanSample
 	bool drawLight{false};
 	bool debugDepth{false};
 	bool supportBlit{false};
+
+    float exposureValue = 1.0f;
 
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
 	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};

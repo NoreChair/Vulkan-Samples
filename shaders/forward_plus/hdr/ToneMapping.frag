@@ -1,25 +1,15 @@
-#version 450 core
+#version 320 es
 precision highp float;
 
+layout(location = 0) in vec2 v_uv;
+
+layout(location = 0) out vec4 o_color;
+
 layout(set = 0, binding = 0) uniform Uniforms{
-    vec4 extent;
-    float targetLuma;
-    float adaptationRate;
-    float minExposure;
-    float maxExposure;
-    uint pixelCount;
+    float exposure;
 };
 
-layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer{
-    // from 0 to the end
-    // exposure, 1.0/exposure, exposure, averageLuma, MinLog, MaxLog, range, rcpRange
-    float exposureBuffer[];
-};
-
-layout(set = 0, rgba16f, binding = 2) readonly uniform image2D sceneColor;
-layout(set = 0, rgba8, binding = 3) writeonly uniform image2D displayImage;
-
-layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(set = 0, binding = 1) uniform sampler2D hdrImage;
 
 // The Reinhard tone operator.  Typically, the value of k is 1.0, but you can adjust exposure by 1/k.
 // I.e. TM_Reinhard(x, 0.5) == TM_Reinhard(x * 2.0, 1.0)
@@ -55,18 +45,9 @@ vec3 ToneMapping_Standard(vec3 hdr){
     return TM_Reinhard(hdr * sqrt(hdr), sqrt(4.0 / 27.0));
 }
 
-float RGBToLuminance(vec3 rgb){
-    return dot(rgb, vec3(0.212671, 0.715160, 0.072169));
-}
-
 void main(){
-    uvec2 dispatchID = min(gl_GlobalInvocationID.xy, uvec2(extent.xy));
-    vec3 hdrColor = imageLoad(sceneColor, ivec2(dispatchID)).rgb;
-    // TODO : bloom
-    hdrColor *= exposureBuffer[0];
-    // TODO : hdr display output
-
-    // hdr scene refers to display refers
-    vec3 sdrColor = ToneMapping_Standard(hdrColor);
-    imageStore(displayImage, ivec2(dispatchID), vec4(sdrColor, 1.0));
+    vec4 hdrColor = texture(hdrImage, v_uv);
+    vec3 sdrColor = ToneMapping_Standard(hdrColor.rgb * exposure);
+    // vec3 sdrColor = ToneMapACES(hdrColor.rgb * exposure);
+    o_color = vec4(sdrColor, 1.0);
 }
