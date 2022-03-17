@@ -391,7 +391,9 @@ void forward_plus::prepare_shaders()
 		    {"debug_draw", "forward_plus/debug_draw.vert", "forward_plus/debug_draw.frag"},
 		    {"sky", "forward_plus/sky.vert", "forward_plus/sky.frag"},
 		    {"sh_sphere", "forward_plus/test/sh_sphere.vert", "forward_plus/test/sh_sphere.frag"},
+		    {"extract_luma_fs", "forward_plus/screen_base.vert", "forward_plus/hdr/ExtractLuma.frag"},
 		    {"tone_mapping_fs", "forward_plus/screen_base.vert", "forward_plus/hdr/ToneMapping.frag"}};
+
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
 		    {"light_grid", "forward_plus/light_grid.comp"},
@@ -510,13 +512,6 @@ void forward_plus::prepare_scene()
 void forward_plus::process_shadow(vkb::CommandBuffer &commandBuffer)
 {
 	vkb::ImageMemoryBarrier barrier{};
-	barrier.src_stage_mask  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-	barrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-	barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
-	commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
-	commandBuffer.image_memory_barrier(*screenShadowImageView, barrier);
-
 	barrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	barrier.src_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -526,7 +521,7 @@ void forward_plus::process_shadow(vkb::CommandBuffer &commandBuffer)
 	commandBuffer.image_memory_barrier(*sceneDepthImageView, barrier);
 	commandBuffer.image_memory_barrier(*shadowImageView, barrier);
 
-	// linear depth
+    // linear depth
 	linearDepthPass->dispatch(commandBuffer, sceneDepthImageView.get(), linearDepthImageView.get(), camera);
 
 	// screen shadow
@@ -741,7 +736,8 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 		cb.bind_image(*hdrColorImageView, *linearClampSampler, 0, 1, 0);
 	});
 
-    // auto exposure
+	// auto exposure
+#	if 1
 	{
 		VkExtent3D imageExtent = hdrColorImage->get_extent();
 		uint32_t   groupCountX = (imageExtent.width + 15) / 16;
@@ -766,25 +762,42 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 		auto allocation = render_context->get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(toneMapUniforms));
 		allocation.update(toneMapUniforms);
 
-		std::vector<ShaderModule *> shaderMoudles       = ShaderProgram::Find(std::string("extract_luma"))->GetShaderModules();
-		vkb::PipelineLayout &       extractLumaPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
-		commandBuffer.bind_pipeline_layout(extractLumaPipeline);
-		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-		commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
-		commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
-		commandBuffer.bind_image(*lumaResultImageView, 0, 3, 0);
-		commandBuffer.dispatch(groupCountX, groupCountY, 0);
+		//std::vector<ShaderModule *> shaderMoudles       = ShaderProgram::Find(std::string("extract_luma"))->GetShaderModules();
+		//vkb::PipelineLayout &       extractLumaPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
+		//commandBuffer.bind_pipeline_layout(extractLumaPipeline);
+		//commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
+		//commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
+		//commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
+		//commandBuffer.bind_image(*lumaResultImageView, 0, 3, 0);
+		//commandBuffer.dispatch(groupCountX, groupCountY, 0);
+
+		full_screen_draw(commandBuffer, *lumaResultImageView, [this, &allocation](CommandBuffer &cb, RenderContext &context) {
+			Device &device         = context.get_device();
+			auto &  modules        = ShaderProgram::Find(std::string("extract_luma_fs"))->GetShaderModules();
+			auto &  pipelineLayout = device.get_resource_cache().request_pipeline_layout(modules);
+			cb.bind_pipeline_layout(pipelineLayout);
+			cb.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
+			cb.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
+			cb.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
+		});
 
 		ImageMemoryBarrier imageBarrier{};
-		imageBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		imageBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		imageBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		imageBarrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		imageBarrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		imageBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-		imageBarrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
+		imageBarrier.old_layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 		imageBarrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(*lumaResultImageView, imageBarrier);
 
-		shaderMoudles                          = ShaderProgram::Find(std::string("gen_histogram"))->GetShaderModules();
+        BufferMemoryBarrier bufferBarrier{};
+		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		bufferBarrier.src_access_mask = 0;
+		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+		commandBuffer.buffer_memory_barrier(*lumaHistogram, 0, lumaHistogram->get_size(), bufferBarrier);
+
+		auto shaderMoudles       = ShaderProgram::Find(std::string("gen_histogram"))->GetShaderModules();
 		vkb::PipelineLayout &histogramPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
 		commandBuffer.bind_pipeline_layout(histogramPipeline);
 		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
@@ -792,13 +805,12 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 		commandBuffer.bind_image(*lumaResultImageView, *linearClampSampler, 0, 2, 0);
 		commandBuffer.dispatch(groupCountX, 0, 0);
 
-		BufferMemoryBarrier bufferBarrier{};
 		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		commandBuffer.buffer_memory_barrier(*lumaHistogram, 0, lumaHistogram->get_size(), bufferBarrier);
-		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
 		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -811,7 +823,8 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 		commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
 		commandBuffer.bind_buffer(*lumaHistogram, 0, lumaHistogram->get_size(), 0, 2, 0);
 		commandBuffer.dispatch(1, 0, 0);
-    }
+	}
+#	endif
 #endif
 }
 
@@ -1056,12 +1069,17 @@ void forward_plus::full_screen_draw(vkb::CommandBuffer &command_buffer, vkb::cor
 	std::vector<ImageView *> imageViews;
 	imageViews.push_back(&target);
 
-	auto &renderTarget = render_context->get_active_frame().get_render_target();
-	auto &renderPass   = device->get_resource_cache().request_render_pass(renderTarget.get_attachments(), loadStoreInfos, subPassInfos);
-	auto &frameBuffer  = device->get_resource_cache().request_framebuffer(renderTarget, renderPass);
+	auto &     image = target.get_image();
+	VkExtent2D extent{image.get_extent().width, image.get_extent().height};
 
+	auto &renderPass  = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);
+	auto &frameBuffer = device->get_resource_cache().request_framebuffer(imageViews, renderPass);
+
+    VkViewport viewport{0.0, 0.0, (float)extent.width, (float)extent.height, 0.0, 1.0};
+	command_buffer.set_viewport(0, {viewport});
+	command_buffer.set_scissor(0, {VkRect2D{VkOffset2D{0, 0}, extent}});
 	std::vector<VkClearValue> colorClearValue{initializers::clear_color_value(0.0, 0.0, 0.0, 0.0)};
-	command_buffer.begin_render_pass(renderTarget, renderPass, frameBuffer, colorClearValue);
+	command_buffer.begin_render_pass(extent, renderPass, frameBuffer, colorClearValue);
 
 	PipelineState     default_pipeline_state;
 	DepthStencilState postProcessDepthState;        // depth test/write off
@@ -1088,6 +1106,7 @@ void forward_plus::full_screen_draw(vkb::CommandBuffer &command_buffer, vkb::cor
 	command_buffer.set_vertex_input_state(vertexInputState);
 	command_buffer.bind_vertex_buffers(0, {*postProcessVB}, {0});
 	command_buffer.draw(3, 1, 0, 0);
+	command_buffer.end_render_pass();
 }
 
 void forward_plus::input_event(const vkb::InputEvent &input_event)
