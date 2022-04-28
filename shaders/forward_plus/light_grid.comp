@@ -150,10 +150,10 @@ void FillLightGrid(uvec2 globalThreadID, uvec2 groupID, uvec2 threadID, uint thr
     memoryBarrierShared();
     barrier();
 
-    float maxDepth = (1.0 / uintBitsToFloat(minDepthUint) - 1.0) * rcpZMagic;
-    float minDepth = (1.0 / uintBitsToFloat(maxDepthUint) - 1.0) * rcpZMagic;
-    // float maxDepth = uintBitsToFloat(minDepthUint);
-    // float minDepth = uintBitsToFloat(maxDepthUint);
+    // float maxDepth = (1.0 / uintBitsToFloat(minDepthUint) - 1.0) * rcpZMagic;
+    // float minDepth = (1.0 / uintBitsToFloat(maxDepthUint) - 1.0) * rcpZMagic;
+    float maxDepth = uintBitsToFloat(minDepthUint);
+    float minDepth = uintBitsToFloat(maxDepthUint);
 
     float depthRange = max(maxDepth - minDepth, FLT_MIN);
     float rcpDepthRange = 1.0 / depthRange;

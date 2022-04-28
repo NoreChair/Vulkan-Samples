@@ -94,7 +94,7 @@ void main(){
     vec4 hpos = vec4(curPixelPos.xy * depth, 1.0, depth);
     vec4 prevHpos = curToPrev * hpos;
     prevHpos.xyz /= prevHpos.w;
-    prevHpos.z = prevHpos.z; // linear dpeth instead of scene depth
+    prevHpos.z = prevHpos.w; // linear dpeth instead of scene depth
 
     imageStore(velocityBuffer, dispatchID, uvec4(PackVelocity(prevHpos.xyz - vec3(curPixelPos, depth))));
 }

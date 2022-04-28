@@ -737,7 +737,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 	});
 
 	// auto exposure
-#	if 1
+#	if 0
 	{
 		VkExtent3D imageExtent = hdrColorImage->get_extent();
 		uint32_t   groupCountX = (imageExtent.width + 15) / 16;
@@ -762,15 +762,6 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 		auto allocation = render_context->get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(toneMapUniforms));
 		allocation.update(toneMapUniforms);
 
-		//std::vector<ShaderModule *> shaderMoudles       = ShaderProgram::Find(std::string("extract_luma"))->GetShaderModules();
-		//vkb::PipelineLayout &       extractLumaPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
-		//commandBuffer.bind_pipeline_layout(extractLumaPipeline);
-		//commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-		//commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
-		//commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
-		//commandBuffer.bind_image(*lumaResultImageView, 0, 3, 0);
-		//commandBuffer.dispatch(groupCountX, groupCountY, 0);
-
 		full_screen_draw(commandBuffer, *lumaResultImageView, [this, &allocation](CommandBuffer &cb, RenderContext &context) {
 			Device &device         = context.get_device();
 			auto &  modules        = ShaderProgram::Find(std::string("extract_luma_fs"))->GetShaderModules();
@@ -790,13 +781,16 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 		imageBarrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		commandBuffer.image_memory_barrier(*lumaResultImageView, imageBarrier);
 
-        BufferMemoryBarrier bufferBarrier{};
-		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		bufferBarrier.src_access_mask = 0;
-		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-		commandBuffer.buffer_memory_barrier(*lumaHistogram, 0, lumaHistogram->get_size(), bufferBarrier);
 
+        PipelineState pipelineState;
+		commandBuffer.set_color_blend_state(pipelineState.get_color_blend_state());
+		commandBuffer.set_depth_stencil_state(pipelineState.get_depth_stencil_state());
+		commandBuffer.set_input_assembly_state(pipelineState.get_input_assembly_state());
+		commandBuffer.set_rasterization_state(pipelineState.get_rasterization_state());
+		commandBuffer.set_viewport_state(pipelineState.get_viewport_state());
+		commandBuffer.set_multisample_state(pipelineState.get_multisample_state());
+
+        BufferMemoryBarrier bufferBarrier{};
 		auto shaderMoudles       = ShaderProgram::Find(std::string("gen_histogram"))->GetShaderModules();
 		vkb::PipelineLayout &histogramPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
 		commandBuffer.bind_pipeline_layout(histogramPipeline);

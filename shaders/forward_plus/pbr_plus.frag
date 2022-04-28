@@ -327,7 +327,7 @@ void main(void)
 		light_contribution += light_data.color * atten * NdotL * (diffuse_color * (vec3(1.0) - F) * Fd + Fr);
     }
 
-    // Abient
+    // Ambient
 	// [1] Tempory irradiance to fix dark metals
 	// TODO: add specular irradiance for realistic metals
 	vec3 irradiance    = vec3(0.02);
