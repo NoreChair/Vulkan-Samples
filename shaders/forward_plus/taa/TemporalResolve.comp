@@ -1,0 +1,268 @@
+#version 450 core
+precision highp float;
+
+#define kLdsPitch 18
+#define kLdsRows 10
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    vec4 extent;
+    vec2 viewportJitter;
+    float speedLimiter; // e.g. 4 pixel as threshould so the speed limiter is 1/4 = 0.25
+};
+
+layout(set = 0, binding = 1) highp uniform sampler2D depthMap;
+layout(set = 0, binding = 2) highp uniform sampler2D previousDepthMap;
+layout(set = 0, binding = 3) highp uniform sampler2D colorMap;
+layout(set = 0, binding = 4) highp uniform sampler2D inTemporalColorMap;
+layout(set = 0, binding = 5) writeonly highp uniform image2D outTemporalColorMap;
+layout(set = 0, r32ui, binding = 6) highp uniform uimage2D velocityMap;
+
+shared float localSharedDepth[kLdsPitch * kLdsRows];
+shared float localSharedR[kLdsPitch * kLdsRows];
+shared float localSharedG[kLdsPitch * kLdsRows];
+shared float localSharedB[kLdsPitch * kLdsRows];
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+uint f32tof16(float val)
+{
+    uint f32 = floatBitsToUint(val);
+    uint f16 = 0u;
+    uint sign = (f32 >> 16) & 0x8000u;
+    int exponent = int((f32 >> 23) & 0xFFu) - 127;
+    uint mantissa = f32 & 0x007FFFFFu;
+    if (exponent == 128)
+    {
+        // Infinity or NaN
+        // NaN bits that are masked out by 0x3FF get discarded.
+        // This can turn some NaNs to infinity, but this is allowed by the spec.
+        f16 = sign | (0x1Fu << 10);
+        f16 |= (mantissa & 0x3FFu);
+    }
+    else if (exponent > 15)
+    {
+        // Overflow - flush to Infinity
+        f16 = sign | (0x1Fu << 10);
+    }
+    else if (exponent > -15)
+    {
+        // Representable value
+        exponent += 15;
+        mantissa >>= 13;
+        f16 = sign | uint(exponent << 10) | mantissa;
+    }
+    else
+    {
+        f16 = sign;
+    }
+    return f16;
+}
+
+float f16tof32(uint val)
+{
+    uint sign = (val & 0x8000u) << 16;
+    int exponent = int((val & 0x7C00u) >> 10);
+    uint mantissa = val & 0x03FFu;
+    float f32 = 0.0;
+    if(exponent == 0)
+    {
+        if (mantissa != 0u)
+        {
+            const float scale = 1.0 / (1 << 24);
+            f32 = scale * mantissa;
+        }
+    }
+    else if (exponent == 31)
+    {
+        return uintBitsToFloat(sign | 0x7F800000u | mantissa);
+    }
+    else
+    {
+        exponent -= 15;
+        float scale;
+        if(exponent < 0)
+        {
+            // The negative unary operator is buggy on OSX.
+            // Work around this by using abs instead.
+            scale = 1.0 / (1 << abs(exponent));
+        }
+        else
+        {
+            scale = 1 << exponent;
+        }
+        float decimal = 1.0 + float(mantissa) / float(1 << 10);
+        f32 = scale * decimal;
+    }
+
+    if (sign != 0u)
+    {
+        f32 = -f32;
+    }
+
+    return f32;
+}
+
+float UnpackXY(uint x)
+{
+    return f16tof32((x & 0x1FF) << 4 | (x >> 9) << 15) * 32768.0;
+}
+
+float UnpackZ( uint x )
+{
+    return f16tof32((x & 0x7FF) << 2 | (x >> 11) << 15) * 128.0;
+}
+
+vec3 UnPackVelocity(uint pack){
+    return vec3(UnpackXY(pack & 0x3FF), UnpackXY((pack >> 10) & 0x3FF), UnpackZ(pack >> 20));
+}
+
+vec3 GetColor(uint id){
+    return vec3(localSharedR[id], localSharedG[id], localSharedB[id]);
+}
+
+void GetBBox(uint fillIdx, uint holeIdx, out vec3 bBoxMin, out vec3 bBoxMax){
+    bBoxMin = bBoxMax = GetColor(fillIdx);
+    vec3 a = GetColor(fillIdx - kLdsPitch - 1);
+    vec3 b = GetColor(fillIdx - kLdsPitch + 1);
+    bBoxMin = min(bBoxMin, min(a, b));
+    bBoxMax = max(bBoxMax, max(a, b));
+    a = GetColor(fillIdx + kLdsPitch - 1);
+    b = GetColor(fillIdx + kLdsPitch + 1);
+    bBoxMin = min(bBoxMin, min(a, b));
+    bBoxMax = max(bBoxMax, max(a, b));
+    a = GetColor(holeIdx);
+    // b = GetColor(holeIdx - kLdsPitch - 1);
+    b = GetColor(holeIdx - fillIdx + holeIdx);
+    bBoxMin = min(bBoxMin, min(a, b));
+    bBoxMax = max(bBoxMax, max(a, b));
+}
+
+ivec2 GetClosestPixel(uint id, out float depth){
+    float depthW = localSharedDepth[id - 1];
+    float depth0 = localSharedDepth[id];
+    float depthE = localSharedDepth[id + 1];
+    float depthN = localSharedDepth[id - kLdsPitch];
+    float depthS = localSharedDepth[id + kLdsPitch];
+
+    depth = min(depthS, min(min(depthN, depthE), min(depth0, depthW)));
+
+    if (depthN == depth)
+        return ivec2(0, -1);
+    else if (depthS == depth)
+        return ivec2(0, +1);
+    else if (depthW == depth)
+        return ivec2(-1, 0);
+    else if (depthE == depth)
+        return ivec2(+1, 0);
+
+    return ivec2(0, 0);
+}
+
+// TOOD : use YCbCr
+vec3 ClipColor(vec3 color, vec3 bBoxMin, vec3 bBoxMax, float dilation)
+{
+    vec3 boxCenter = (bBoxMin + bBoxMax) * 0.5;
+    vec3 halfDim = (bBoxMax - bBoxMin) * 0.5 * dilation + 0.001;
+    vec3 displacement = color - boxCenter;
+    vec3 units = abs(displacement / halfDim);
+    float maxUnit = max(max(units.x, units.y), max(units.z, 1.0));
+    return boxCenter + displacement / maxUnit;
+}
+
+vec3 TM_Reinhard(vec3 hdr, float k /*= 1.0*/)
+{
+    return hdr / (hdr + k);
+}
+
+// The inverse of Reinhard
+vec3 ITM_Reinhard(vec3 sdr, float k /*= 1.0*/)
+{
+    return k * sdr / (k - sdr);
+}
+
+void ApplyTemporalBlend(uvec2 st, uint id, vec3 bBoxMin, vec3 bBoxMax){
+    float closestDepth;
+    vec3 currentColor = GetColor(id);
+    vec3 velocity = UnPackVelocity(imageLoad(velocityMap, ivec2(st) + GetClosestPixel(id, closestDepth)).x);
+    closestDepth += velocity.z;
+
+    vec2 uv = (vec2(st) + velocity.xy + viewportJitter) * extent.zw;
+    vec4 temporalDepth4 = textureGather(previousDepthMap, uv, 0);
+    float temporalDepth = max(max(temporalDepth4.x, temporalDepth4.y), max(temporalDepth4.z, temporalDepth4.w));
+
+    float speedFacter = clamp((1.0 - velocity.xy * speedLimiter), 0.0, 1.0);
+
+    vec4 temporalColor = texture(inTemporalColorMap, (vec2(st) + 0.5) * extent.zw);
+
+    float weight = temporalColor.w;
+    // Pixel colors are pre-multiplied by their weight to enable bilinear filtering.  Divide by weight to recover color.
+    vec3 color = temporalColor.xyz / max(weight, 1e-6);
+
+    // Clip the temporal color to the current neighborhood's bounding box.  Increase the size of the bounding box for
+    // stationary pixels to avoid rejecting noisy specular highlights.
+    color = ClipColor(color, bBoxMin, bBoxMax, mix(1.0, 4.0, speedFacter * speedFacter));
+
+    // Blend previous color with new color based on confidence.  Confidence steadily grows with each iteration
+    // until it is broken by movement such as through disocclusion, color changes, or moving beyond the resolution
+    // of the velocity buffer.
+    color = ITM_Reinhard(lerp(TM_Reinhard(currentColor), TM_Reinhard(color), weight));
+
+    // Update weight
+    weight = clamp(1.0/(2.0 - weight), 0.0, 1.0);
+
+    // Quantize weight to what is representable
+    weight = f16tof32(f32tof16(weight));
+
+    // Breaking this up into two buffers means it can be 40 bits instead of 64.
+    imageStore(outTemporalColorMap, ivec2(st), vec4(color, 1.0) * weight);
+}
+
+void main(){
+    const uint ldsHalfPitch = kLdsPitch / 2;
+    uvec3 groupID = gl_WorkGroupID;
+    uint groupIndex = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+
+    // Fill share memory with temporal buffer color
+    // * 0 * 0 * 0 * 0 * 0 * 0 * 0 * 0 * 0
+    // 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    // * 0 * 0 * 0 * 0 * 0 * 0 * 0 * 0 * 0
+    // 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    // Using gather instruct
+    for (uint i = groupIndex; i < 45; i += 64)
+    {
+        uint x = (i % ldsHalfPitch) * 2;
+        uint y = (i / ldsHalfPitch) * 2;
+        uint topLeftIdx = x + y * kLdsPitch;
+        uvec2 topLeftST = groupID.xy * uvec2(8, 8) - 1 + uvec2(x / 2u, y);
+        vec2 uv = extent.zw * (topLeftST * vec2(2, 1) + vec2(2, 1));
+
+        vec4 depths = textureGather(depthMap, uv, 0);
+        localSharedDepth[topLeftIdx + 0] = depths.w;
+        localSharedDepth[topLeftIdx + 1] = depths.z;
+        localSharedDepth[topLeftIdx + kLdsPitch] = depths.x;
+        localSharedDepth[topLeftIdx + 1 + kLdsPitch] = depths.y;
+
+        vec4 r4 = textureGather(colorMap, uv, 0);
+        vec4 g4 = textureGather(colorMap, uv, 1);
+        vec4 b4 = textureGather(colorMap, uv, 2);
+
+        localSharedR[topLeftIdx] = r4.w; localSharedR[topLeftIdx + 1] = r4.z; localSharedR[topLeftIdx + kLdsPitch] = r4.x; localSharedR[topLeftIdx + 1 + kLdsPitch] = r4.y;
+        localSharedG[topLeftIdx] = g4.w; localSharedG[topLeftIdx + 1] = g4.z; localSharedG[topLeftIdx + kLdsPitch] = g4.x; localSharedG[topLeftIdx + 1 + kLdsPitch] = g4.y;
+        localSharedB[topLeftIdx] = b4.w; localSharedB[topLeftIdx + 1] = b4.z; localSharedB[topLeftIdx + kLdsPitch] = b4.x; localSharedB[topLeftIdx + 1 + kLdsPitch] = b4.y;
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    uint idx0 = gl_LocalInvocationID.x * 2u + (gl_LocalInvocationID.y + 1u) * kLdsPitch + 1u;
+    uint idx1 = idx0 + 1;
+
+    vec3 bBoxMin, bBoxMax;
+    GetBBox(idx0, idx1, bBoxMin, bBoxMax);
+
+    uvec2 st0 = gl_LocalInvocationID.xy * uvec2(2u, 1u);
+    ApplyTemporalBlend(st0, idx0, bBoxMin, bBoxMax);
+
+    uvec2 st1 = st0 + uvec2(1u, 0u);
+    ApplyTemporalBlend(st1, idx1, bBoxMin, bBoxMax);
+}

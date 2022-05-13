@@ -41,13 +41,18 @@ vec3 InverseToneMapACES(vec3 sdr)
 // advantage it has over Reinhard-Squared is that the shoulder goes to white more quickly and gives more overall
 // brightness and contrast to the image.
 // https://www.desmos.com/calculator/sqjhtq4rot
-vec3 ToneMapping_Standard(vec3 hdr){
+vec3 ToneMap_Standard(vec3 hdr){
     return TM_Reinhard(hdr * sqrt(hdr), sqrt(4.0 / 27.0));
+}
+
+vec3 InverseToneMap_Stanard(vec3 sdr)
+{
+    return pow(ITM_Reinhard(sdr, sqrt(4.0 / 27.0)), vec3(2.0 / 3.0));
 }
 
 void main(){
     vec4 hdrColor = texture(hdrImage, v_uv);
-    vec3 sdrColor = ToneMapping_Standard(hdrColor.rgb * exposure);
+    vec3 sdrColor = ToneMap_Standard(hdrColor.rgb * exposure);
     // vec3 sdrColor = ToneMapACES(hdrColor.rgb * exposure);
     o_color = vec4(sdrColor, 1.0);
 }

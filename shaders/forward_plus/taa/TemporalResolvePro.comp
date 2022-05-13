@@ -1,0 +1,365 @@
+#version 450 core
+precision highp float;
+
+#define COLOR_CLIP_SAMPLE_PATTERN_5 0
+#define COLOR_CLIP_SAMPLE_PATTERN_9 1
+
+#ifndef COLOR_CLIP_SAMPLE_PATTERN
+#define COLOR_CLIP_SAMPLE_PATTERN COLOR_CLIP_SAMPLE_PATTERN_5
+#endif
+
+#define GROUP_THREAD_NUM_X 8
+#define GROUP_THREAD_NUM_Y 8
+
+#define CACHE_COLOR_WIDTH 10
+#define CACHE_COLOR_HEIGHT 10
+
+#define MIN_VARIANCE_GAMMA 0.75f
+#define MAX_VARIANCE_GAMMA 2.f
+
+#define DEPTH_DIFF 1e-2
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    vec4 extent;
+    vec2 viewportJitter;
+    float speedLimiter; // e.g. 4 pixel as threshould so the speed limiter is 1/4 = 0.25, better use 1/128 on 1080p
+};
+
+layout(set = 0, binding = 1) highp uniform sampler2D depthMap;
+layout(set = 0, binding = 2) highp uniform sampler2D preDepthMap;
+layout(set = 0, binding = 3) highp uniform sampler2D colorMap;
+layout(set = 0, binding = 4) highp uniform sampler2D inTemporalColorMap;
+layout(set = 0, binding = 5) writeonly highp uniform image2D outTemporalColorMap;
+layout(set = 0, binding = 6) highp uniform usampler2D velocityMap;
+
+layout(local_size_x = GROUP_THREAD_NUM_X, local_size_y = GROUP_THREAD_NUM_Y, local_size_z = 1) in;
+
+shared float localSharedR[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+shared float localSharedG[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+shared float localSharedB[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+
+uint f32tof16(float val)
+{
+    uint f32 = floatBitsToUint(val);
+    uint f16 = 0u;
+    uint sign = (f32 >> 16) & 0x8000u;
+    int exponent = int((f32 >> 23) & 0xFFu) - 127;
+    uint mantissa = f32 & 0x007FFFFFu;
+    if (exponent == 128)
+    {
+        // Infinity or NaN
+        // NaN bits that are masked out by 0x3FF get discarded.
+        // This can turn some NaNs to infinity, but this is allowed by the spec.
+        f16 = sign | (0x1Fu << 10);
+        f16 |= (mantissa & 0x3FFu);
+    }
+    else if (exponent > 15)
+    {
+        // Overflow - flush to Infinity
+        f16 = sign | (0x1Fu << 10);
+    }
+    else if (exponent > -15)
+    {
+        // Representable value
+        exponent += 15;
+        mantissa >>= 13;
+        f16 = sign | uint(exponent << 10) | mantissa;
+    }
+    else
+    {
+        f16 = sign;
+    }
+    return f16;
+}
+
+float f16tof32(uint val)
+{
+    uint sign = (val & 0x8000u) << 16;
+    int exponent = int((val & 0x7C00u) >> 10);
+    uint mantissa = val & 0x03FFu;
+    float f32 = 0.0;
+    if(exponent == 0)
+    {
+        if (mantissa != 0u)
+        {
+            const float scale = 1.0 / (1 << 24);
+            f32 = scale * mantissa;
+        }
+    }
+    else if (exponent == 31)
+    {
+        return uintBitsToFloat(sign | 0x7F800000u | mantissa);
+    }
+    else
+    {
+        exponent -= 15;
+        float scale;
+        if(exponent < 0)
+        {
+            // The negative unary operator is buggy on OSX.
+            // Work around this by using abs instead.
+            scale = 1.0 / (1 << abs(exponent));
+        }
+        else
+        {
+            scale = 1 << exponent;
+        }
+        float decimal = 1.0 + float(mantissa) / float(1 << 10);
+        f32 = scale * decimal;
+    }
+
+    if (sign != 0u)
+    {
+        f32 = -f32;
+    }
+
+    return f32;
+}
+
+float UnpackXY(uint x)
+{
+    return f16tof32((x & 0x1FF) << 4 | (x >> 9) << 15) * 32768.0;
+}
+
+float UnpackZ( uint x )
+{
+    return f16tof32((x & 0x7FF) << 2 | (x >> 11) << 15) * 128.0;
+}
+
+vec3 UnPackVelocity(uint pack){
+    return vec3(UnpackXY(pack & 0x3FF), UnpackXY((pack >> 10) & 0x3FF), UnpackZ(pack >> 20));
+}
+
+vec3 ToneMap_Standard(vec3 hdr){
+    return TM_Reinhard(hdr * sqrt(hdr), sqrt(4.0 / 27.0));
+}
+
+vec3 InverseToneMap_Stanard(vec3 sdr)
+{
+    return pow(ITM_Reinhard(sdr, sqrt(4.0 / 27.0)), vec3(2.0 / 3.0));
+}
+
+
+vec3 RGBToYCoCg(vec3 rgb){
+    const vec3 _Y = vec3(0.25, 0.5, 0.25);
+    const vec3 _Co = vec3(0.5, 0.0, -0.5);
+    const vec3 _Cg = vec3(-0.25, 0.5, -0.25);
+    return vec3(dot(rgb, _Y), dot(rgb, _Co), dot(rgb, _Cg));
+}
+
+vec3 YCoCgToRGB(vec3 ycc){
+    // const vec3 _R = vec3(1.0, 1.0, -1.0);
+    // const vec3 _G = vec3(1.0, 0.0, 1.0);
+    // const vec3 _B = vec3(1.0, -1.0, -1.0);
+    float tmp = ycc.x - ycc.z;
+    return vec3(tmp + ycc.y, ycc.x + ycc.z, tmp - ycc.y);
+}
+
+vec3 GetCurrentColor(int id){
+    return vec3(localSharedR[id], localSharedG[id], localSharedB[id]);
+}
+
+void CacheColorToLSM(ivec2 startID, ivec2 groupThreadID){
+    // One pixel border
+    if(groupThreadID.x < 5 && groupThreadID.y < 5){
+        ivec2 mulTowID = groupThreadID * 2;
+        vec2 sampleUV = (vec2(startID + mulTowID) - 0.5) * extent.zw;
+
+        vec4 r4 = textureGather(colorMap, sampleUV, 0);
+        vec4 g4 = textureGather(colorMap, sampleUV, 1);
+        vec4 b4 = textureGather(colorMap, sampleUV, 2);
+
+        int topLeftIdx = mulTowID.y * CACHE_COLOR_WIDTH + mulTowID.x;
+        localSharedR[topLeftIdx] = r4.w; localSharedR[topLeftIdx + 1] = r4.z; localSharedR[topLeftIdx + CACHE_COLOR_WIDTH] = r4.x; localSharedR[topLeftIdx + 1 + CACHE_COLOR_WIDTH] = r4.y;
+        localSharedG[topLeftIdx] = g4.w; localSharedG[topLeftIdx + 1] = g4.z; localSharedG[topLeftIdx + CACHE_COLOR_WIDTH] = g4.x; localSharedG[topLeftIdx + 1 + CACHE_COLOR_WIDTH] = g4.y;
+        localSharedB[topLeftIdx] = b4.w; localSharedB[topLeftIdx + 1] = b4.z; localSharedB[topLeftIdx + CACHE_COLOR_WIDTH] = b4.x; localSharedB[topLeftIdx + 1 + CACHE_COLOR_WIDTH] = b4.y;
+    }
+
+    memoryBarrierShared();
+    barrier();
+}
+
+float MaxOf(vec4 v){
+    return max(max(v.x, v.y), max(v.z, v.w));
+}
+
+float MinOf(vec4 v){
+    return min(min(v.x, v.y), min(v.z, v.w));
+}
+
+vec4 BicubicSampling5(vec2 st)
+{
+    const vec2 rcpResolution = extent.zw;
+    const vec2 fractional = fract( st );
+    const vec2 uv = ( floor( st ) + vec2( 0.5, 0.5 ) ) * rcpResolution;
+
+    // 5-tap bicubic sampling (for Hermite/Carmull-Rom filter) -- (approximate from original 16->9-tap bilinear fetching) 
+    const vec2 t = fractional;
+    const vec2 t2 = fractional * fractional;
+    const vec2 t3 = fractional * fractional * fractional;
+    const float s = 0.5;
+    const vec2 w0 = -s * t3 + 2.0 * s * t2 - s * t;
+    const vec2 w1 = ( 2.0 - s ) * t3 + ( s - 3.0 ) * t2 + 1.0;
+    const vec2 w2 = ( s - 2.0 ) * t3 + s * t2 + s * t;
+    const vec2 w3 = s * t3 - s * t2;
+    const vec2 s0 = w1 + w2;
+    const vec2 f0 = w2 / ( w1 + w2 );
+    const vec2 m0 = uv + f0 * rcpResolution;
+    const vec2 tc0 = uv - 1.f * rcpResolution;
+    const vec2 tc3 = uv + 2.f * rcpResolution;
+
+    const vec4 A = texture( inTemporalColorMap, vec2( m0.x, tc0.y ), 0 );
+    const vec4 B = texture( inTemporalColorMap, vec2( tc0.x, m0.y ), 0 );
+    const vec4 C = texture( inTemporalColorMap, vec2( m0.x, m0.y ), 0 );
+    const vec4 D = texture( inTemporalColorMap, vec2( tc3.x, m0.y ), 0 );
+    const vec4 E = texture( inTemporalColorMap, vec2( m0.x, tc3.y ), 0 );
+    const vec4 color = ( 0.5 * ( A + B ) * w0.x + A * s0.x + 0.5 * ( A + B ) * w3.x ) * w0.y + ( B * w0.x + C * s0.x + D * w3.x ) * s0.y + ( 0.5 * ( B + E ) * w0.x + E * s0.x + 0.5 * ( D + E ) * w3.x ) * w3.y;
+    return color;
+}
+
+vec4 Cubic(float v){
+    const vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+    const vec4 s = n * n * n;
+    const float x = s.x;
+    const float y = s.y - 4.0 * s.x;
+    const float z = s.z - 4.0 * s.y + 6.0 * s.x;
+    const float w = 6.0 - x - y - z;
+    return vec4(x, y, z, w) * (1.0/6.0);
+}
+
+vec4 BicubicSampling4(vec2 st){
+    vec2 texCoords = st;
+    vec2 fxy = fract(texCoords);
+    texCoords -= fxy;
+
+    vec4 xcubic = Cubic(fxy.x);
+    vec4 ycubic = Cubic(fxy.y);
+
+    vec4 c = texCoords.xxyy + vec2(-0.5, 1.5).xyxy;
+
+    vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
+    vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
+
+    offset *= extent.zzww;
+
+    vec4 sample0 = texture(inTemporalColorMap, offset.xz);
+    vec4 sample1 = texture(inTemporalColorMap, offset.yz);
+    vec4 sample2 = texture(inTemporalColorMap, offset.xw);
+    vec4 sample3 = texture(inTemporalColorMap, offset.yw);
+
+    float sx = s.x / (s.x + s.y);
+    float sy = s.z / (s.z + s.w);
+
+    return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);
+}
+
+vec4 GetHistoryColor(vec2 st, float edge){
+    const bool useBicubic = edge < 0.5;
+    vec4 historyColor = vec4(1.0, 1.0, 1.0, 1.0);
+    if(useBicubic){
+        historyColor = BicubicSampling5(st);
+    }else{
+        historyColor = texture( inTemporalColorMap, (st + vec2(0.5, 0.5)) * extent.zw, 0 );
+    }
+    return historyColor;
+}
+
+vec3 ClipHistoryColor(vec3 currentColor, vec3 historyColor, float varianceGamma, ivec2 groupID){
+#if COLOR_CLIP_SAMPLE_PATTERN == COLOR_CLIP_SAMPLE_PATTERN_9
+    // 9 samples in '+' and 'x'
+    const ivec2 offsets[ 8 ] = {ivec2( -1, -1 ), ivec2( -1, 0 ), ivec2( -1, 1 ), ivec2( 0, 1 ), ivec2( 1, 1 ), ivec2( 1, 0 ), ivec2( 1, -1 ), ivec2( 0, -1 )};
+    const uint iteratorMax = 8;
+    const float rcpDivider = 1.0 / 9.0;
+#else
+    // 5 samples, current '+' is used.
+    const ivec2 offsets[ 4 ] = {ivec2( -1, 0 ), ivec2( 0, 1 ), ivec2( 1, 0 ), ivec2( 0, -1 )};
+    const uint iteratorMax = 4;
+    const float rcpDivider = 0.2;
+#endif
+
+    vec3 currentColorYCC = RGBToYCoCg(currentColor);
+    vec3 moment1 = currentColorYCC;
+    vec3 moment2 = currentColorYCC * currentColorYCC;
+
+    for(uint i = 0; i < iteratorMax; ++i){
+        ivec2 offsetID = groupID + offsets[i];
+        int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
+        vec3 c = RGBToYCoCg(GetCurrentColor(offsetIndex));
+        moment1 += c;
+        moment2 += c * c;
+    }
+
+    vec3 mean = moment1 * rcpDivider;
+    vec3 variance = sqrt(moment2 * rcpDivider - mean * mean) * varianceGamma;
+    vec3 minC = YCoCgToRGB(mean - variance);
+    vec3 maxC = YCoCgToRGB(mean + variance);
+    historyColor = clamp(historyColor , minC, maxC);
+    return historyColor;
+}
+
+vec4 GetFinalColor(vec3 currentColor, vec3 historyColor, float weight){
+    vec4 finalColor = vec4(1.0, 1.0, 1.0, 1.0);
+    finalColor.rgb = InverseToneMap_Stanard(mix(ToneMap_Standard(currentColor), ToneMap_Standard(historyColor), weight));
+    finalColor.a = 1.0/(2.0 - weight);
+    return finalColor;
+}
+
+vec4 GetAverageColor(vec3 currentColor, ivec2 groupID){
+    // 5 samples, current 'x' is used.
+    const ivec2 offsets[ 4 ] = {ivec2( -1, -1 ), ivec2( 1, -1 ), ivec2( -1, 1 ), ivec2( 1, 1 )};
+    const uint iteratorMax = 4;
+    const float rcpDivider = 0.2;
+
+    for(uint i = 0; i < iteratorMax; ++i){
+        ivec2 offsetID = groupID + offsets[i];
+        int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
+        currentColor += GetCurrentColor(offsetIndex);
+    }
+    return vec4(currentColor * rcpDivider, 0.5);
+}
+
+void main(){
+    uvec3 groupID = gl_WorkGroupID;
+    uvec3 groupThreadID = gl_LocalInvocationID;
+
+    ivec2 threadStartID = ivec2(groupID.xy) * ivec2(GROUP_THREAD_NUM_X, GROUP_THREAD_NUM_X);
+    ivec2 groupST = ivec2(groupThreadID.xy);
+    CacheColorToLSM(threadStartID, groupST);
+
+    // Speed factor
+    vec2 screenUV = (vec2(gl_GlobalInvocationID.xy) + 0.5) * extent.zw;
+    vec3 velocity = UnPackVelocity(texture(velocityMap, screenUV).r);
+    float speedFactor = clamp( 1.0 - (length(velocity.xy) * speedLimiter), 0.0, 1.0);
+
+    // Depth factor
+    vec4 depth4 = textureGather(depthMap, screenUV, 0);
+    float curDepth = MinOf(depth4);
+    float maxDepth = MaxOf(depth4);
+    float edge = step(DEPTH_DIFF, abs(maxDepth - curDepth));
+
+    vec2 preScreenUV = screenUV + velocity.xy * extent.zw;
+    vec2 preScreenUVJitter = preScreenUV + viewportJitter.xy * extent.zw;
+    float preDepth = texture(preDepthMap, preScreenUVJitter).r + 0.001;
+    float reprojectDepth = curDepth + velocity.z;
+    float depthFactor = step(reprojectDepth, preDepth);
+
+    float uvFactor = (all(greaterThanEqual(preScreenUV, vec2(0.0, 0.0))) && all(lessThanEqual(preScreenUV, vec2(1.0, 1.0))))? 1.0 : 0.0;
+    bool validHistory = (speedFactor * depthFactor * uvFactor) > 0.0;
+
+    groupST += ivec2(1,1);
+    vec3 currentColor = GetCurrentColor( groupST.y * CACHE_COLOR_WIDTH + groupST.x );
+    vec4 finalColor = vec4(1.0, 1.0, 1.0, 1.0);
+
+    if(validHistory){
+        vec2 preScreenST = vec2(gl_GlobalInvocationID.xy) + velocity.xy;
+        vec4 historyColor = GetHistoryColor(preScreenST, edge);
+        float varianceGamma = mix(MIN_VARIANCE_GAMMA, MAX_VARIANCE_GAMMA, speedFactor * speedFactor);
+        historyColor.rgb = ClipHistoryColor(currentColor, historyColor.rgb, varianceGamma, groupST);
+        float weight = historyColor.a * speedFactor * depthFactor;
+        finalColor = GetFinalColor(currentColor, historyColor.rgb, weight);
+    }else{
+        finalColor = GetAverageColor(currentColor, groupST);
+    }
+
+    imageStore(outTemporalColorMap, ivec2(gl_GlobalInvocationID.xy), finalColor);
+}

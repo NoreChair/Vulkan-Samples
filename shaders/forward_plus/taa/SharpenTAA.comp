@@ -1,0 +1,60 @@
+#version 450 core
+precision highp float;
+
+#define GROUP_THREAD_NUM_X 8
+#define GROUP_THREAD_NUM_Y 8
+#define GROUP_THREAD_SIZE GROUP_THREAD_NUM_X * GROUP_THREAD_NUM_Y
+
+#define CACHE_COLOR_WIDTH 10
+#define CACHE_COLOR_HEIGHT 10
+#define CACHE_COLOR_SIZE CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT
+
+layout(set = 0, binding = 0) uniform Uniforms{
+    vec4 extent;
+    vec2 sharpenWeight;
+};
+
+layout(set = 0, binding = 1) highp uniform sampler2D temporalColorMap;
+layout(set = 0, binding = 2) writeonly highp uniform image2D sceneColorMap;
+
+layout(local_size_x = GROUP_THREAD_NUM_X, local_size_y = GROUP_THREAD_NUM_Y, local_size_z = 1) in;
+
+shared float localSharedR[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+shared float localSharedG[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+shared float localSharedB[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+shared float localSharedW[CACHE_COLOR_WIDTH * CACHE_COLOR_HEIGHT];
+
+vec3 GetColor(uint index){
+    return vec3(localSharedR[index], localSharedG[index], localSharedB[index]);
+}
+
+void main(){
+    ivec2 groupThreadIDStart = ivec2(gl_WorkGroupID.xy) * ivec2(GROUP_THREAD_NUM_X, GROUP_THREAD_NUM_Y);
+
+    for(uint i = gl_LocalInvocationIndex; i < CACHE_COLOR_SIZE; i += GROUP_THREAD_SIZE){
+        ivec2 sampleST = groupThreadIDStart + ivec2(i % CACHE_COLOR_WIDTH, i / CACHE_COLOR_WIDTH) - 1;
+        vec2 sampleUV = clamp(vec2(sampleST) + 0.5, vec2(0.0, 0.0), extent.xy) * extent.zw;
+        vec4 color = texture(temporalColorMap, sampleUV);
+        color.rgb = log2(1.0 + color.rgb);
+        localSharedR[i] = color.r; localSharedG[i] = color.g;
+        localSharedB[i] = color.b; localSharedW[i] = color.a;
+    }
+
+    barrier();
+    memoryBarrierShared();
+
+    uint ldsIndex = (gl_LocalInvocationID.x + 1) + (gl_LocalInvocationID.y + 1) * CACHE_COLOR_WIDTH;
+
+    vec3 center = GetColor(ldsIndex);
+    vec3 neighbors = GetColor(ldsIndex - 1) + GetColor(ldsIndex + 1) +
+        GetColor(ldsIndex - CACHE_COLOR_WIDTH) + GetColor(ldsIndex + CACHE_COLOR_WIDTH);
+
+    // If the temporal weight is less than 0.5, it might be a brand new pixel.  Brand new pixels
+    // have not been antialiased at all and can be jarring.  Here we change the weights to actually
+    // blur rather than sharpen those pixels.
+    float temporalWeight = localSharedW[ldsIndex];
+    float centerWeight = temporalWeight <= 0.5 ? 0.5 : sharpenWeight.x;
+    float lateralWeight = temporalWeight <= 0.5 ? 0.125 : sharpenWeight.y;
+
+    imageStore(sceneColorMap, ivec2(gl_GlobalInvocationID.xy), vec4(exp2(max(vec3(0.0, 0.0, 0.0), centerWeight * center - lateralWeight * neighbors)) - 1.0, 1.0));
+}
