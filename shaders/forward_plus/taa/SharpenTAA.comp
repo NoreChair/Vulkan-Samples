@@ -11,7 +11,7 @@ precision highp float;
 
 layout(set = 0, binding = 0) uniform Uniforms{
     vec4 extent;
-    vec2 sharpenWeight;
+    vec2 sharpenWeight; // 5*f(x,y) - f(neighbors) : (1 + x) * (f(x,y) - 0.25x * f(neighbors)
 };
 
 layout(set = 0, binding = 1) highp uniform sampler2D temporalColorMap;
@@ -48,13 +48,7 @@ void main(){
     vec3 center = GetColor(ldsIndex);
     vec3 neighbors = GetColor(ldsIndex - 1) + GetColor(ldsIndex + 1) +
         GetColor(ldsIndex - CACHE_COLOR_WIDTH) + GetColor(ldsIndex + CACHE_COLOR_WIDTH);
-
-    // If the temporal weight is less than 0.5, it might be a brand new pixel.  Brand new pixels
-    // have not been antialiased at all and can be jarring.  Here we change the weights to actually
-    // blur rather than sharpen those pixels.
-    float temporalWeight = localSharedW[ldsIndex];
-    float centerWeight = temporalWeight <= 0.5 ? 0.5 : sharpenWeight.x;
-    float lateralWeight = temporalWeight <= 0.5 ? 0.125 : sharpenWeight.y;
-
+    float centerWeight = localSharedW[ldsIndex] <= 0.5? 0.5 : sharpenWeight.x;
+    float lateralWeight = localSharedW[ldsIndex] <= 0.5? 0.125 : sharpenWeight.y;
     imageStore(sceneColorMap, ivec2(gl_GlobalInvocationID.xy), vec4(exp2(max(vec3(0.0, 0.0, 0.0), centerWeight * center - lateralWeight * neighbors)) - 1.0, 1.0));
 }

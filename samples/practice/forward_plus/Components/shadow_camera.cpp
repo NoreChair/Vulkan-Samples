@@ -12,7 +12,13 @@ std::type_index shadow_camera::get_type()
 
 glm::mat4 shadow_camera::get_projection()
 {
+    // shadow camera don't need to jitter
 	return projection_matrix;
+}
+
+glm::mat4 shadow_camera::get_projection_without_jitter()
+{
+    return projection_matrix;
 }
 
 glm::mat4 shadow_camera::get_view()

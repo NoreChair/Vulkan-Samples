@@ -364,6 +364,9 @@ void forward_plus::prepare_pipelines()
 	fs         = ShaderProgram::FindShaderSource(std::string("forward_plus/pbr_plus.frag"));
 	opaquePass = std::make_unique<opaque_pass>(*render_context, std::move(vs), std::move(fs), get_render_context().get_surface_extent());
 	opaquePass->prepare();
+
+    temporalAAPass = std::make_unique<TAA>(device.get(), render_context.get());
+    temporalAAPass->prepare();
 }
 
 void forward_plus::prepare_shaders()
@@ -392,7 +395,8 @@ void forward_plus::prepare_shaders()
 		    {"sky", "forward_plus/sky.vert", "forward_plus/sky.frag"},
 		    {"sh_sphere", "forward_plus/test/sh_sphere.vert", "forward_plus/test/sh_sphere.frag"},
 		    {"extract_luma_fs", "forward_plus/screen_base.vert", "forward_plus/hdr/ExtractLuma.frag"},
-		    {"tone_mapping_fs", "forward_plus/screen_base.vert", "forward_plus/hdr/ToneMapping.frag"}};
+		    {"tone_mapping_fs", "forward_plus/screen_base.vert", "forward_plus/hdr/ToneMapping.frag"}
+        };
 
 		std::vector<CProgramSources> computeSourceFiles{
 		    {"linear_depth", "forward_plus/linear_depth.comp"},
@@ -401,7 +405,11 @@ void forward_plus::prepare_shaders()
 		    {"adjust_exposure", "forward_plus/hdr/AdjustExposure.comp"},
 		    {"extract_luma", "forward_plus/hdr/ExtractLuma.comp"},
 		    {"gen_histogram", "forward_plus/hdr/GenerateHistogram.comp"},
-		    {"tone_mapping", "forward_plus/hdr/ToneMapping.comp"}};
+		    {"tone_mapping", "forward_plus/hdr/ToneMapping.comp"},
+		    {"temporal_resolve", "forward_plus/taa/TemporalResolvePro.comp"},
+			{"sharpen", "forward_plus/taa/SharpenTAA.comp"},
+		    {"velocity_gen", "forward_plus/velocity/velocity_gen.comp"}
+        };
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
 		for (int i = 0; i < shaderSourceFiles.size(); ++i)
@@ -522,7 +530,7 @@ void forward_plus::process_shadow(vkb::CommandBuffer &commandBuffer)
 	commandBuffer.image_memory_barrier(*shadowImageView, barrier);
 
     // linear depth
-	linearDepthPass->dispatch(commandBuffer, sceneDepthImageView.get(), linearDepthImageView.get(), camera);
+	linearDepthPass->dispatch(commandBuffer, sceneDepthImageView.get(), linearDepthImageView[sourceTargetIndex].get(), camera);
 
 	// screen shadow
 	screenShadowPass->set_up(sceneDepthImageView.get(), shadowImageView.get(), screenShadowImageView.get());
@@ -538,7 +546,7 @@ void forward_plus::process_light_buffer(vkb::CommandBuffer &commandBuffer)
 	barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 	barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
 	barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
-	commandBuffer.image_memory_barrier(*linearDepthImageView, barrier);
+	commandBuffer.image_memory_barrier(*linearDepthImageView[sourceTargetIndex], barrier);
 
 	BufferMemoryBarrier bufferBarrier{};
 	bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -548,7 +556,7 @@ void forward_plus::process_light_buffer(vkb::CommandBuffer &commandBuffer)
 	commandBuffer.buffer_memory_barrier(*lightGridBuffer, 0, lightBuffer->get_size(), bufferBarrier);
 	//commandBuffer.buffer_memory_barrier(*lightMaskBuffer, 0, lightMaskBuffer->get_size(), bufferBarrier);
 
-	lightGridPass->set_up(lightBuffer.get(), lightGridBuffer.get(), linearDepthImageView.get(), camera);
+	lightGridPass->set_up(lightBuffer.get(), lightGridBuffer.get(), linearDepthImageView[sourceTargetIndex].get(), camera);
 	lightGridPass->dispatch(commandBuffer);
 
 	bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -706,16 +714,6 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         commandBuffer.image_memory_barrier(swapchainView, barrier);
     }
 #else
-
-	// Prepare to process tone mapping
-	ImageMemoryBarrier barrier{};
-	barrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-	barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-	barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-	barrier.old_layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	barrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
 
 	full_screen_draw(commandBuffer, swapchainView, [this](CommandBuffer &cb, RenderContext &context) {
 		struct
@@ -949,6 +947,38 @@ void forward_plus::render(float delta_time)
 		commandBuffer.end_render_pass();
 	}
 
+    if (enableTemporalAA) {
+        ImageMemoryBarrier barrier{};
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
+
+        temporalAAPass->gen_velocity_buffer(commandBuffer, camera, sourceTargetIndex);
+
+        temporalAAPass->reslove(commandBuffer, sourceTargetIndex, destTargetIndex, sharpenValue);
+
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
+    }else{
+        ImageMemoryBarrier barrier{};
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
+    }
+
 	process_HDR(commandBuffer);
 
 	{
@@ -990,6 +1020,33 @@ void forward_plus::update(float delta_time)
 	update_scene(delta_time);
 	update_gui(delta_time);
 	render(delta_time);
+
+    if (enableTemporalAA) {
+        temporalAAPass->set_previous_view_proj(camera->get_view(), camera->get_projection());
+    }
+}
+
+void forward_plus::update_scene(float delta_time)
+{
+    VulkanSample::update_scene(delta_time);
+
+    if (enableTemporalAA) {
+        auto jitter = temporalAAPass->get_jitter(frame_count);
+        camera->set_jitter(jitter.x, jitter.y);
+        sourceTargetIndex = (sourceTargetIndex + 1) % 2;
+        destTargetIndex = (sourceTargetIndex + 1) % 2;
+    }else {
+        camera->set_jitter(0.0, 0.0);
+    }
+
+    if (historyTAA != enableTemporalAA) {
+        if (enableTemporalAA) {
+            temporalAAPass->clear_history();
+            temporalAAPass->set_previous_view_proj(camera->get_view(), camera->get_projection());
+        }
+    }
+
+    historyTAA = enableTemporalAA;
 }
 
 void forward_plus::draw_gui()
@@ -1007,6 +1064,7 @@ void forward_plus::draw_gui()
 	ImGui::Checkbox("Show Depth", &debugDepth);
 	ImGui::Checkbox("Draw AABB", &drawAABB);
 	ImGui::Checkbox("Draw Light Outline", &drawLight);
+    ImGui::Checkbox("Enable TAA", &enableTemporalAA);
 	ImGui::DragFloat("Exposure", &exposureValue, 0.1, 0.0, 10.0);
 	ImGui::End();
 }

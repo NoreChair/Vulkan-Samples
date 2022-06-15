@@ -14,6 +14,8 @@ class shadow_camera : public vkb::sg::Camera
 
 	glm::mat4 get_projection() override;
 
+    glm::mat4 get_projection_without_jitter() override;
+
 	glm::mat4 get_view() override;
 
 	glm::vec3 get_shadow_center();

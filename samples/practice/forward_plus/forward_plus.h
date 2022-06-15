@@ -17,6 +17,7 @@
 #include "RenderPass/opaque_pass.h"
 #include "RenderPass/screen_shadow_pass.h"
 #include "RenderPass/show_depth_pass.h"
+#include "RenderPass/TAA.h"
 
 class vkb::sg::Node;
 class vkb::sg::SubMesh;
@@ -49,6 +50,7 @@ class forward_plus : public vkb::VulkanSample
     void process_shadow(vkb::CommandBuffer& commandBuffer);
     void process_light_buffer(vkb::CommandBuffer& commandBuffer);
     void process_HDR(vkb::CommandBuffer& commandBuffer);
+    void update_scene(float delta_time);
 	void render(float delta_time);
 	void get_sorted_nodes(glm::vec3 direction, glm::vec3 position, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *opaque_nodes, std::multimap<float, std::pair<vkb::sg::Node *, vkb::sg::SubMesh *>> *transparent_nodes = nullptr);
 	void full_screen_draw(vkb::CommandBuffer &command_buffer, vkb::core::ImageView &target, std::function<void(vkb::CommandBuffer &, vkb::RenderContext &)> body);
@@ -65,7 +67,12 @@ class forward_plus : public vkb::VulkanSample
 	bool drawLight{false};
 	bool debugDepth{false};
 	bool supportBlit{false};
+    bool enableTemporalAA{false};
+    bool historyTAA{false};
 
+    int sourceTargetIndex = 0;
+    int destTargetIndex = 1;
+    float sharpenValue = 0.25f;
     float exposureValue = 1.0f;
 
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
@@ -79,6 +86,7 @@ class forward_plus : public vkb::VulkanSample
 	std::unique_ptr<show_depth_pass>    showDepthPass{nullptr};
 	std::unique_ptr<opaque_pass>        opaquePass{nullptr};
 	std::unique_ptr<debug_draw_pass>    debugDrawPass{nullptr};
+    std::unique_ptr<TAA>                temporalAAPass{nullptr};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();

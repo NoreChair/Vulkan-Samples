@@ -64,6 +64,8 @@ class OrthographicCamera : public Camera
 
 	virtual glm::mat4 get_projection() override;
 
+    virtual glm::mat4 get_projection_without_jitter() override;
+
   private:
 	float left{-1.0f};
 

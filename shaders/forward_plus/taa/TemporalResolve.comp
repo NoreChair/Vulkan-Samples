@@ -169,15 +169,13 @@ vec3 ClipColor(vec3 color, vec3 bBoxMin, vec3 bBoxMax, float dilation)
     return boxCenter + displacement / maxUnit;
 }
 
-vec3 TM_Reinhard(vec3 hdr, float k /*= 1.0*/)
-{
-    return hdr / (hdr + k);
+vec3 ToneMap_Standard(vec3 hdr){
+    return TM_Reinhard(hdr * sqrt(hdr), sqrt(4.0 / 27.0));
 }
 
-// The inverse of Reinhard
-vec3 ITM_Reinhard(vec3 sdr, float k /*= 1.0*/)
+vec3 InverseToneMap_Stanard(vec3 sdr)
 {
-    return k * sdr / (k - sdr);
+    return pow(ITM_Reinhard(sdr, sqrt(4.0 / 27.0)), vec3(2.0 / 3.0));
 }
 
 void ApplyTemporalBlend(uvec2 st, uint id, vec3 bBoxMin, vec3 bBoxMax){
@@ -190,7 +188,7 @@ void ApplyTemporalBlend(uvec2 st, uint id, vec3 bBoxMin, vec3 bBoxMax){
     vec4 temporalDepth4 = textureGather(previousDepthMap, uv, 0);
     float temporalDepth = max(max(temporalDepth4.x, temporalDepth4.y), max(temporalDepth4.z, temporalDepth4.w));
 
-    float speedFacter = clamp((1.0 - velocity.xy * speedLimiter), 0.0, 1.0);
+    float speedFacter = clamp((1.0 - length(velocity.xy * speedLimiter)), 0.0, 1.0);
 
     vec4 temporalColor = texture(inTemporalColorMap, (vec2(st) + 0.5) * extent.zw);
 
@@ -205,7 +203,7 @@ void ApplyTemporalBlend(uvec2 st, uint id, vec3 bBoxMin, vec3 bBoxMax){
     // Blend previous color with new color based on confidence.  Confidence steadily grows with each iteration
     // until it is broken by movement such as through disocclusion, color changes, or moving beyond the resolution
     // of the velocity buffer.
-    color = ITM_Reinhard(lerp(TM_Reinhard(currentColor), TM_Reinhard(color), weight));
+    color = InverseToneMap_Stanard(lerp(ToneMap_Standard(currentColor), ToneMap_Standard(color), weight));
 
     // Update weight
     weight = clamp(1.0/(2.0 - weight), 0.0, 1.0);
@@ -220,7 +218,7 @@ void ApplyTemporalBlend(uvec2 st, uint id, vec3 bBoxMin, vec3 bBoxMax){
 void main(){
     const uint ldsHalfPitch = kLdsPitch / 2;
     uvec3 groupID = gl_WorkGroupID;
-    uint groupIndex = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+    uint groupIndex = gl_LocalInvocationIndex;
 
     // Fill share memory with temporal buffer color
     // * 0 * 0 * 0 * 0 * 0 * 0 * 0 * 0 * 0

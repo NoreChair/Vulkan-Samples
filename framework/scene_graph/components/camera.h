@@ -46,6 +46,8 @@ class Camera : public Component
 
 	virtual glm::mat4 get_projection() = 0;
 
+    virtual glm::mat4 get_projection_without_jitter() = 0;
+
 	virtual glm::mat4 get_view();
 
 	void set_node(Node &node);
@@ -63,6 +65,12 @@ class Camera : public Component
 	virtual float get_near_plane() const = 0;
 
 	virtual void set_near_plane(float znear) = 0;
+
+    void set_jitter(float x, float y) { jitter_x = x; jitter_y = y; }
+
+  protected:
+    float jitter_x;
+    float jitter_y;
 
   private:
 	Node *node{nullptr};

@@ -60,6 +60,8 @@ class PerspectiveCamera : public Camera
 
 	virtual glm::mat4 get_projection() override;
 
+    virtual glm::mat4 get_projection_without_jitter() override;
+
   private:
 	/**
 	 * @brief Screen size aspect ratio

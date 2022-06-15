@@ -72,7 +72,16 @@ float PerspectiveCamera::get_aspect_ratio()
 glm::mat4 PerspectiveCamera::get_projection()
 {
 	// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
-	return glm::perspective(fov, aspect_ratio, far_plane, near_plane);
+    auto projection = glm::perspective(fov, aspect_ratio, far_plane, near_plane);
+    projection[2][0] = jitter_x;
+    projection[2][1] = jitter_y;
+	return projection;
 }
+
+glm::mat4 PerspectiveCamera::get_projection_without_jitter()
+{
+    return glm::perspective(fov, aspect_ratio, far_plane, near_plane);
+}
+
 }        // namespace sg
 }        // namespace vkb

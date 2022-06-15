@@ -102,6 +102,15 @@ float OrthographicCamera::get_far_plane() const
 
 glm::mat4 OrthographicCamera::get_projection()
 {
+    // Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
+    auto ortho = glm::ortho(left, right, bottom, top, far_plane, near_plane);
+    ortho[2][0] = jitter_x;
+    ortho[2][1] = jitter_y;
+    return ortho;
+}
+
+glm::mat4 OrthographicCamera::get_projection_without_jitter()
+{
 	// Note: Using Revsered depth-buffer for increased precision, so Znear and Zfar are flipped
 	return glm::ortho(left, right, bottom, top, far_plane, near_plane);
 }

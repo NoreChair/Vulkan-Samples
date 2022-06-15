@@ -25,7 +25,7 @@ namespace vkb
 namespace sg
 {
 Camera::Camera(const std::string &name) :
-    Component{name}
+    Component{name}, jitter_x{0.0}, jitter_y{0.0}
 {}
 
 std::type_index Camera::get_type()

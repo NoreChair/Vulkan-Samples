@@ -14,8 +14,8 @@ precision highp float;
 #define CACHE_COLOR_WIDTH 10
 #define CACHE_COLOR_HEIGHT 10
 
-#define MIN_VARIANCE_GAMMA 0.75f
-#define MAX_VARIANCE_GAMMA 2.f
+#define MIN_VARIANCE_GAMMA 0.75
+#define MAX_VARIANCE_GAMMA 1.25
 
 #define DEPTH_DIFF 1e-2
 
@@ -23,6 +23,7 @@ layout(set = 0, binding = 0) uniform Uniforms{
     vec4 extent;
     vec2 viewportJitter;
     float speedLimiter; // e.g. 4 pixel as threshould so the speed limiter is 1/4 = 0.25, better use 1/128 on 1080p
+    float discardHistory; // 0.0 mean history buffer are expired mostly happen on beginning, otherwise use 1.0
 };
 
 layout(set = 0, binding = 1) highp uniform sampler2D depthMap;
@@ -130,6 +131,16 @@ vec3 UnPackVelocity(uint pack){
     return vec3(UnpackXY(pack & 0x3FF), UnpackXY((pack >> 10) & 0x3FF), UnpackZ(pack >> 20));
 }
 
+vec3 TM_Reinhard(vec3 hdr, float k /*= 1.0*/)
+{
+    return hdr / (hdr + k);
+}
+
+vec3 ITM_Reinhard(vec3 sdr, float k /*= 1.0*/)
+{
+    return k * sdr / (k - sdr);
+}
+
 vec3 ToneMap_Standard(vec3 hdr){
     return TM_Reinhard(hdr * sqrt(hdr), sqrt(4.0 / 27.0));
 }
@@ -138,7 +149,6 @@ vec3 InverseToneMap_Stanard(vec3 sdr)
 {
     return pow(ITM_Reinhard(sdr, sqrt(4.0 / 27.0)), vec3(2.0 / 3.0));
 }
-
 
 vec3 RGBToYCoCg(vec3 rgb){
     const vec3 _Y = vec3(0.25, 0.5, 0.25);
@@ -280,6 +290,8 @@ vec3 ClipHistoryColor(vec3 currentColor, vec3 historyColor, float varianceGamma,
     vec3 currentColorYCC = RGBToYCoCg(currentColor);
     vec3 moment1 = currentColorYCC;
     vec3 moment2 = currentColorYCC * currentColorYCC;
+    vec3 bBoxMin, bBoxMax;
+    bBoxMin = bBoxMax = currentColorYCC;
 
     for(uint i = 0; i < iteratorMax; ++i){
         ivec2 offsetID = groupID + offsets[i];
@@ -287,13 +299,16 @@ vec3 ClipHistoryColor(vec3 currentColor, vec3 historyColor, float varianceGamma,
         vec3 c = RGBToYCoCg(GetCurrentColor(offsetIndex));
         moment1 += c;
         moment2 += c * c;
+        bBoxMin = min(bBoxMin, c);
+        bBoxMax = max(bBoxMax, c);
     }
 
     vec3 mean = moment1 * rcpDivider;
     vec3 variance = sqrt(moment2 * rcpDivider - mean * mean) * varianceGamma;
     vec3 minC = YCoCgToRGB(mean - variance);
     vec3 maxC = YCoCgToRGB(mean + variance);
-    historyColor = clamp(historyColor , minC, maxC);
+    // historyColor = clamp(historyColor, max(minC, bBoxMin), min(maxC, bBoxMax));
+    historyColor = clamp(historyColor, minC, maxC);
     return historyColor;
 }
 
@@ -331,7 +346,7 @@ void main(){
     vec3 velocity = UnPackVelocity(texture(velocityMap, screenUV).r);
     float speedFactor = clamp( 1.0 - (length(velocity.xy) * speedLimiter), 0.0, 1.0);
 
-    // Depth factor
+    // Depth factor, block?
     vec4 depth4 = textureGather(depthMap, screenUV, 0);
     float curDepth = MinOf(depth4);
     float maxDepth = MaxOf(depth4);
@@ -344,7 +359,7 @@ void main(){
     float depthFactor = step(reprojectDepth, preDepth);
 
     float uvFactor = (all(greaterThanEqual(preScreenUV, vec2(0.0, 0.0))) && all(lessThanEqual(preScreenUV, vec2(1.0, 1.0))))? 1.0 : 0.0;
-    bool validHistory = (speedFactor * depthFactor * uvFactor) > 0.0;
+    bool validHistory = (speedFactor * depthFactor * uvFactor * discardHistory) > 0.0;
 
     groupST += ivec2(1,1);
     vec3 currentColor = GetCurrentColor( groupST.y * CACHE_COLOR_WIDTH + groupST.x );
