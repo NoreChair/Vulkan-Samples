@@ -545,6 +545,7 @@ void forward_plus::process_light_buffer(vkb::CommandBuffer &commandBuffer)
 	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
 	barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
 	barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
 	commandBuffer.image_memory_barrier(*linearDepthImageView[sourceTargetIndex], barrier);
 
@@ -1031,8 +1032,9 @@ void forward_plus::update_scene(float delta_time)
     VulkanSample::update_scene(delta_time);
 
     if (enableTemporalAA) {
+        const auto extent = get_render_context().get_surface_extent();
         auto jitter = temporalAAPass->get_jitter(frame_count);
-        camera->set_jitter(jitter.x, jitter.y);
+        camera->set_jitter((jitter.x - 0.5f)/extent.width, (jitter.y - 0.5f)/extent.height);
         sourceTargetIndex = (sourceTargetIndex + 1) % 2;
         destTargetIndex = (sourceTargetIndex + 1) % 2;
     }else {

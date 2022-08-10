@@ -34,6 +34,7 @@ namespace GraphicContext{
     extern std::shared_ptr<vkb::core::ImageView> velocityImageView;
 
     extern std::shared_ptr<vkb::core::Sampler>   linearClampSampler;
+    extern std::shared_ptr<vkb::core::Sampler>   pointClampSampler;
 
     void Init(vkb::Device & device, int width, int height);
     void Release();

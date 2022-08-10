@@ -27,13 +27,14 @@ namespace GraphicContext
     std::shared_ptr<vkb::core::ImageView> hdrColorImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> sceneDepthImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> shadowImageView{nullptr};
-    std::shared_ptr<vkb::core::ImageView> linearDepthImageView[2]{nullptr};
+    std::shared_ptr<vkb::core::ImageView> linearDepthImageView[2]{nullptr, nullptr};
     std::shared_ptr<vkb::core::ImageView> screenShadowImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> lumaResultImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> temporalBlendImageView[2]{nullptr, nullptr};
     std::shared_ptr<vkb::core::ImageView> velocityImageView{nullptr};
 
     std::shared_ptr<vkb::core::Sampler> linearClampSampler{nullptr};
+    std::shared_ptr<vkb::core::Sampler> pointClampSampler{nullptr};
 
     void Init(vkb::Device &device, int width, int height)
     {
@@ -103,6 +104,10 @@ namespace GraphicContext
 	    samplerInfo.minLod       = 0;
 	    samplerInfo.maxLod       = VK_LOD_CLAMP_NONE;
 	    linearClampSampler       = std::make_unique<vkb::core::Sampler>(device, samplerInfo);
+
+        samplerInfo.magFilter    = VK_FILTER_NEAREST;
+        samplerInfo.minFilter    = VK_FILTER_NEAREST;
+        pointClampSampler        = std::make_unique<vkb::core::Sampler>(device, samplerInfo);
     }
 
     void Release()
@@ -139,5 +144,6 @@ namespace GraphicContext
 	    velocityImageView.reset();
 
 	    linearClampSampler.reset();
+        pointClampSampler.reset();
     }
 }        // namespace GraphicContext

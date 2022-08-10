@@ -106,7 +106,7 @@ void TAA::reslove(vkb::CommandBuffer &commandBuffer, int srcIndex, int targetInd
         commandBuffer.bind_image(*GraphicContext::hdrColorImageView, *GraphicContext::linearClampSampler, 0, 3, 0);
         commandBuffer.bind_image(*GraphicContext::temporalBlendImageView[srcIndex], *GraphicContext::linearClampSampler, 0, 4, 0);
         commandBuffer.bind_image(*GraphicContext::temporalBlendImageView[targetIndex], 0, 5, 0);
-        commandBuffer.bind_image(*GraphicContext::velocityImageView, 0, 6, 0);
+        commandBuffer.bind_image(*GraphicContext::velocityImageView, *GraphicContext::pointClampSampler, 0, 6, 0);
         commandBuffer.dispatch((extent.width + 8) / 8, (extent.height + 8) / 8, 1);
     }
 
