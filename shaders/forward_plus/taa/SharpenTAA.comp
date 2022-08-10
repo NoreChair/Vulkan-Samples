@@ -46,9 +46,10 @@ void main(){
     uint ldsIndex = (gl_LocalInvocationID.x + 1) + (gl_LocalInvocationID.y + 1) * CACHE_COLOR_WIDTH;
 
     vec3 center = GetColor(ldsIndex);
-    vec3 neighbors = GetColor(ldsIndex - 1) + GetColor(ldsIndex + 1) +
+
+	vec3 neighbors = GetColor(ldsIndex - 1) + GetColor(ldsIndex + 1) +
         GetColor(ldsIndex - CACHE_COLOR_WIDTH) + GetColor(ldsIndex + CACHE_COLOR_WIDTH);
-    float centerWeight = localSharedW[ldsIndex] <= 0.5? 0.5 : sharpenWeight.x;
-    float lateralWeight = localSharedW[ldsIndex] <= 0.5? 0.125 : sharpenWeight.y;
+    float centerWeight = sharpenWeight.x;
+    float lateralWeight = sharpenWeight.y;
     imageStore(sceneColorMap, ivec2(gl_GlobalInvocationID.xy), vec4(exp2(max(vec3(0.0, 0.0, 0.0), centerWeight * center - lateralWeight * neighbors)) - 1.0, 1.0));
 }

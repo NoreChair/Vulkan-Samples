@@ -265,6 +265,7 @@ vec4 BicubicSampling4(vec2 st){
 
 vec4 GetHistoryColor(vec2 st, float edge){
     const bool useBicubic = edge < 0.5;
+    // const bool useBicubic = false;
     vec4 historyColor = vec4(1.0, 1.0, 1.0, 1.0);
     if(useBicubic){
         historyColor = BicubicSampling5(st);
@@ -314,23 +315,26 @@ vec3 ClipHistoryColor(vec3 currentColor, vec3 historyColor, float varianceGamma,
 
 vec4 GetFinalColor(vec3 currentColor, vec3 historyColor, float weight){
     vec4 finalColor = vec4(1.0, 1.0, 1.0, 1.0);
-    finalColor.rgb = InverseToneMap_Stanard(mix(ToneMap_Standard(currentColor), ToneMap_Standard(historyColor), weight));
-    finalColor.a = 1.0/(2.0 - weight);
-    return finalColor;
+    // finalColor.rgb = InverseToneMap_Stanard(mix(ToneMap_Standard(currentColor), ToneMap_Standard(historyColor), weight));
+	finalColor.rgb = mix(currentColor, historyColor, weight);
+	finalColor.a   = 1.0 / (2.0 - weight);
+	return finalColor;
 }
 
 vec4 GetAverageColor(vec3 currentColor, ivec2 groupID){
-    // 5 samples, current 'x' is used.
-    const ivec2 offsets[ 4 ] = {ivec2( -1, -1 ), ivec2( 1, -1 ), ivec2( -1, 1 ), ivec2( 1, 1 )};
-    const uint iteratorMax = 4;
-    const float rcpDivider = 0.2;
 
-    for(uint i = 0; i < iteratorMax; ++i){
-        ivec2 offsetID = groupID + offsets[i];
-        int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
-        currentColor += GetCurrentColor(offsetIndex);
-    }
-    return vec4(currentColor * rcpDivider, 0.5);
+    return vec4(currentColor, 0.5);
+    // 5 samples, current 'x' is used.
+    // const ivec2 offsets[ 4 ] = {ivec2( -1, -1 ), ivec2( 1, -1 ), ivec2( -1, 1 ), ivec2( 1, 1 )};
+    // const uint iteratorMax = 4;
+    // const float rcpDivider = 0.2;
+
+    // for(uint i = 0; i < iteratorMax; ++i){
+    //     ivec2 offsetID = groupID + offsets[i];
+    //     int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
+    //     currentColor += GetCurrentColor(offsetIndex);
+    // }
+    // return vec4(currentColor * rcpDivider, 0.5);
 }
 
 void main(){
@@ -344,16 +348,17 @@ void main(){
     // Speed factor
     vec2 screenUV = (vec2(gl_GlobalInvocationID.xy) + 0.5) * extent.zw;
     vec3 velocity = UnPackVelocity(texture(velocityMap, screenUV).r);
+    velocity.xy = vec2(0.0);
     float speedFactor = clamp( 1.0 - (length(velocity.xy) * speedLimiter), 0.0, 1.0);
 
-    // Depth factor, block?
+	// Depth factor, block?
     vec4 depth4 = textureGather(depthMap, screenUV, 0);
     float curDepth = MinOf(depth4);
     float maxDepth = MaxOf(depth4);
     float edge = step(DEPTH_DIFF, abs(maxDepth - curDepth));
 
     vec2 preScreenUV = screenUV + velocity.xy * extent.zw;
-    vec2 preScreenUVJitter = preScreenUV + viewportJitter.xy * extent.zw;
+    vec2 preScreenUVJitter = preScreenUV + viewportJitter.xy;
     float preDepth = texture(preDepthMap, preScreenUVJitter).r + 0.001;
     float reprojectDepth = curDepth + velocity.z;
     float depthFactor = step(reprojectDepth, preDepth);
@@ -372,7 +377,8 @@ void main(){
         historyColor.rgb = ClipHistoryColor(currentColor, historyColor.rgb, varianceGamma, groupST);
         float weight = historyColor.a * speedFactor * depthFactor;
         finalColor = GetFinalColor(currentColor, historyColor.rgb, weight);
-    }else{
+		// finalColor = vec4(historyColor.rgb, 0.5);
+	}else{
         finalColor = GetAverageColor(currentColor, groupST);
     }
 

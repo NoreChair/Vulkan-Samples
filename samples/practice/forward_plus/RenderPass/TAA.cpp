@@ -32,8 +32,8 @@ glm::vec2 TAA::get_jitter(uint32_t frameIndex) {
     return s_hammersleyPoint[jitterSampleIndex];
 }
 
-void TAA::clear_history() {
-    clearHistoryFlag = true;
+void TAA::clear_history(bool clear) {
+    clearHistoryFlag = clear;
 }
 
 void TAA::gen_velocity_buffer(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, int srcIndex){
@@ -101,9 +101,9 @@ void TAA::reslove(vkb::CommandBuffer &commandBuffer, int srcIndex, int targetInd
         allocation.update(uniforms);
 
         commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-        commandBuffer.bind_image(*GraphicContext::linearDepthImageView[srcIndex], *GraphicContext::linearClampSampler, 0, 1, 0);
-        commandBuffer.bind_image(*GraphicContext::linearDepthImageView[targetIndex], *GraphicContext::linearClampSampler, 0, 2, 0);
-        commandBuffer.bind_image(*GraphicContext::hdrColorImageView, *GraphicContext::linearClampSampler, 0, 3, 0);
+        commandBuffer.bind_image(*GraphicContext::linearDepthImageView[srcIndex], *GraphicContext::pointClampSampler, 0, 1, 0);
+        commandBuffer.bind_image(*GraphicContext::linearDepthImageView[targetIndex], *GraphicContext::pointClampSampler, 0, 2, 0);
+        commandBuffer.bind_image(*GraphicContext::hdrColorImageView, *GraphicContext::pointClampSampler, 0, 3, 0);
         commandBuffer.bind_image(*GraphicContext::temporalBlendImageView[srcIndex], *GraphicContext::linearClampSampler, 0, 4, 0);
         commandBuffer.bind_image(*GraphicContext::temporalBlendImageView[targetIndex], 0, 5, 0);
         commandBuffer.bind_image(*GraphicContext::velocityImageView, *GraphicContext::pointClampSampler, 0, 6, 0);

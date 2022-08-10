@@ -1031,6 +1031,7 @@ void forward_plus::update_scene(float delta_time)
 {
     VulkanSample::update_scene(delta_time);
 
+    temporalAAPass->clear_history(false);
     if (enableTemporalAA) {
         const auto extent = get_render_context().get_surface_extent();
         auto jitter = temporalAAPass->get_jitter(frame_count);
@@ -1043,7 +1044,7 @@ void forward_plus::update_scene(float delta_time)
 
     if (historyTAA != enableTemporalAA) {
         if (enableTemporalAA) {
-            temporalAAPass->clear_history();
+            temporalAAPass->clear_history(true);
             temporalAAPass->set_previous_view_proj(camera->get_view(), camera->get_projection());
         }
     }

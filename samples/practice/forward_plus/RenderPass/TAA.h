@@ -15,7 +15,7 @@ class TAA
 
 	void      prepare();
 	glm::vec2 get_jitter(uint32_t frameIndex);
-	void      clear_history();
+	void      clear_history(bool clear);
 	void      gen_velocity_buffer(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, int srcIndex);
 	void      reslove(vkb::CommandBuffer &commandBuffer, int srcIndex, int targetIndex, float sharpen);
 	void      set_blend_count(int v){temporalBlendCount = v;}
@@ -27,7 +27,7 @@ class TAA
     void bind_pipeline(vkb::CommandBuffer &commandBuffer, vkb::PipelineState& pipelineState);
 
   private:
-	const static uint32_t k_jittlerSampleCount = 8;
+	const static uint32_t k_jittlerSampleCount = 16;
 	static bool           s_samplePointInited;
 	static glm::vec2      s_hammersleyPoint[k_jittlerSampleCount];
 
