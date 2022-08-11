@@ -23,12 +23,30 @@ layout(set = 0, std430, binding = 2) readonly buffer Histogram{
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 shared float accumulation[256];
+shared float totalWeight;
 
-void main(){
-    uint threadIndex = gl_LocalInvocationIndex;
+void main()
+{
+	uint threadIndex = gl_LocalInvocationIndex;
     float accumWeight = float(threadIndex) * float(histogram[threadIndex]);
 
-    for(uint i = 1u; i < 256u; i *= 2u){
+	// accumulation[threadIndex] = accumWeight;
+	// memoryBarrierShared();
+	// barrier();
+	// if (threadIndex == 0u)
+	// {
+	// 	float w = 0.0;
+	// 	for (int i = 0; i < 256; ++i)
+	// 	{
+	// 		w += accumulation[i];
+	// 	}
+	// 	totalWeight = w;
+	// 	memoryBarrierShared();
+	// 	barrier();
+	// }
+	// accumWeight = totalWeight;
+
+	for(uint i = 1u; i < 256u; i *= 2u){
         accumulation[threadIndex] = accumWeight;
 
         memoryBarrierShared();
@@ -46,19 +64,19 @@ void main(){
     // <Photographic Tone Reproduction for Digital Images>
     // equation 1
     float averageLuma = exp2(averageLogLuma / 254.0 * logRange + minLog);
-    float targetExposure = targetLuma / averageLuma;
+    float targetExposure = targetLuma / max(averageLuma, 1e-3);
 
     float exposure = exposureBuffer[0];
     exposure = mix(exposure, targetExposure, adaptationRate);
-    exposure = clamp(exposure, minExposure, maxExposure);
+	exposure = clamp(exposure, exp2(minExposure), exp2(maxExposure));
 
     if(threadIndex == 0u){
         exposureBuffer[0] = exposure;
         exposureBuffer[1] = 1.0 / exposure;
-        exposureBuffer[2] = exposure;
-        exposureBuffer[3] = averageLogLuma;
+		exposureBuffer[2] = averageLuma;
+		exposureBuffer[3] = targetExposure;
 
-        float biasToCenter = (floor(averageLogLuma) - 128.0) / 255.0;
+		float biasToCenter = (floor(averageLogLuma) - 128.0) / 255.0;
         if (abs(biasToCenter) > 0.1)
         {
             minLog += biasToCenter * rcpLogRange;
@@ -71,4 +89,3 @@ void main(){
         exposureBuffer[7] = 1.0 / logRange;
     }
 }
-

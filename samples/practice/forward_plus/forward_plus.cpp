@@ -213,9 +213,9 @@ void forward_plus::prepare_render_context()
 {
 	// so we can just copy offscreen image to swap chain image
 	auto &properties = render_context->get_swapchain().get_properties();
-	//properties.image_usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+	properties.image_usage |= VK_IMAGE_USAGE_STORAGE_BIT;
 	properties.image_usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-	properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	//properties.image_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	render_context->prepare(1, swap_chain_create_func);
 }
 
@@ -571,25 +571,24 @@ void forward_plus::process_light_buffer(vkb::CommandBuffer &commandBuffer)
 void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 {
 	auto &swapchainView = const_cast<ImageView &>(render_context->get_active_frame().get_render_target().get_views()[0]);
-#if 0
     {
         // Prepare to process tone mapping
         ImageMemoryBarrier barrier{};
-        barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-        barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-        barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
-
         barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         barrier.src_access_mask = 0;
         barrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-		barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 		barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
-		commandBuffer.image_memory_barrier(*sdrColorImageView, barrier);
+		commandBuffer.image_memory_barrier(swapchainView, barrier);
+
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        barrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_GENERAL;
+        commandBuffer.image_memory_barrier(*lumaResultImageView, barrier);
     }
 
     // HDR process and auto exposure
@@ -607,13 +606,13 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
             uint32_t pixelCount;
         }toneMapUniforms;
         toneMapUniforms.extent = glm::vec4((float)imageExtent.width, (float)imageExtent.height, 1.0f / (float)imageExtent.width, 1.0f / (float)imageExtent.height);
-        toneMapUniforms.targetLuma = 1.0f;
+        toneMapUniforms.targetLuma = targetLumin;
         toneMapUniforms.adaptationRate = 0.05f;
         toneMapUniforms.minExposure = -8.0f;
         toneMapUniforms.maxExposure = 8.0f;
         toneMapUniforms.pixelCount = imageExtent.width * imageExtent.height;
 
-        auto allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(toneMapUniforms));
+        auto allocation = render_context->get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(toneMapUniforms));
         allocation.update(toneMapUniforms);
 
         std::vector<ShaderModule*> shaderMoudles = ShaderProgram::Find(std::string("extract_luma"))->GetShaderModules();
@@ -623,7 +622,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
         commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
         commandBuffer.bind_image(*lumaResultImageView, 0, 3, 0);
-        commandBuffer.dispatch(groupCountX, groupCountY, 0);
+        commandBuffer.dispatch(groupCountX, groupCountY, 1);
 
         shaderMoudles = ShaderProgram::Find(std::string("tone_mapping"))->GetShaderModules();
         vkb::PipelineLayout &toneMapPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
@@ -631,11 +630,11 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
         commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
         commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
-        commandBuffer.bind_image(*sdrColorImageView, 0, 3, 0);
-        commandBuffer.dispatch(groupCountX, groupCountY, 0);
+        commandBuffer.bind_image(swapchainView, 0, 3, 0);
+        commandBuffer.dispatch(groupCountX, groupCountY, 1);
 
         ImageMemoryBarrier imageBarrier{};
-        imageBarrier.src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        imageBarrier.src_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         imageBarrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         imageBarrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
         imageBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
@@ -649,7 +648,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
         commandBuffer.bind_buffer(*lumaHistogram, 0, lumaHistogram->get_size(), 0, 1, 0);
         commandBuffer.bind_image(*lumaResultImageView, *linearClampSampler, 0, 2, 0);
-        commandBuffer.dispatch(groupCountX, 0, 0);
+        commandBuffer.dispatch(groupCountX, 1, 1);
 
         BufferMemoryBarrier bufferBarrier{};
         bufferBarrier.src_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -669,7 +668,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
         commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
         commandBuffer.bind_buffer(*lumaHistogram, 0, lumaHistogram->get_size(), 0, 2, 0);
-        commandBuffer.dispatch(1, 0, 0);
+        commandBuffer.dispatch(1, 1, 1);
     }
 
     {
@@ -677,148 +676,14 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
 
 		ImageMemoryBarrier barrier{};
 		barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-		barrier.dst_access_mask = VK_ACCESS_TRANSFER_READ_BIT;
-		barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
-		barrier.new_layout      = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-		commandBuffer.image_memory_barrier(*sdrColorImageView, barrier);
-
-		barrier.src_stage_mask  = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		barrier.src_access_mask = 0;
+		barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		barrier.src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		barrier.dst_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		barrier.old_layout      = VK_IMAGE_LAYOUT_UNDEFINED;
-		barrier.new_layout      = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
+		barrier.new_layout      = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
 		commandBuffer.image_memory_barrier(swapchainView, barrier);
-
-		VkExtent3D  colorImageExtent = sdrColorImageView->get_image().get_extent();
-		VkExtent3D  swapChainExtent  = swapchainView.get_image().get_extent();
-		VkImageBlit blit{};
-		blit.srcOffsets[0]             = VkOffset3D{0, 0, 0};
-		blit.srcOffsets[1]             = VkOffset3D{(int32_t) colorImageExtent.width, (int32_t) colorImageExtent.height, 0};
-		blit.dstOffsets[0]             = VkOffset3D{0, 0, 0};
-		blit.dstOffsets[1]             = VkOffset3D{(int32_t) swapChainExtent.width, (int32_t) swapChainExtent.height, 0};
-		blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		blit.srcSubresource.layerCount = 1;
-		blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		blit.dstSubresource.layerCount = 1;
-
-		commandBuffer.blit_image(sdrColorImageView->get_image(), swapchainView.get_image(), {blit});
-
-        barrier.src_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        barrier.old_layout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        commandBuffer.image_memory_barrier(swapchainView, barrier);
     }
-#else
 
-	full_screen_draw(commandBuffer, swapchainView, [this](CommandBuffer &cb, RenderContext &context) {
-		struct
-		{
-			float exposure;
-		} toneMapUniforms;
-
-		toneMapUniforms.exposure = exposureValue;
-
-		auto allocation = context.get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(toneMapUniforms));
-		allocation.update(toneMapUniforms);
-
-		Device &device         = context.get_device();
-		auto &  modules        = ShaderProgram::Find(std::string("tone_mapping_fs"))->GetShaderModules();
-		auto &  pipelineLayout = device.get_resource_cache().request_pipeline_layout(modules);
-		cb.bind_pipeline_layout(pipelineLayout);
-		cb.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-		cb.bind_image(*hdrColorImageView, *linearClampSampler, 0, 1, 0);
-	});
-
-	// auto exposure
-#	if 0
-	{
-		VkExtent3D imageExtent = hdrColorImage->get_extent();
-		uint32_t   groupCountX = (imageExtent.width + 15) / 16;
-		uint32_t   groupCountY = (imageExtent.height + 15) / 16;
-
-		struct
-		{
-			glm::vec4 extent;
-			float     targetLuma;
-			float     adaptationRate;
-			float     minExposure;
-			float     maxExposure;
-			uint32_t  pixelCount;
-		} toneMapUniforms;
-		toneMapUniforms.extent         = glm::vec4((float) imageExtent.width, (float) imageExtent.height, 1.0f / (float) imageExtent.width, 1.0f / (float) imageExtent.height);
-		toneMapUniforms.targetLuma     = 1.0f;
-		toneMapUniforms.adaptationRate = 0.05f;
-		toneMapUniforms.minExposure    = -8.0f;
-		toneMapUniforms.maxExposure    = 8.0f;
-		toneMapUniforms.pixelCount     = imageExtent.width * imageExtent.height;
-
-		auto allocation = render_context->get_active_frame().allocate_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(toneMapUniforms));
-		allocation.update(toneMapUniforms);
-
-		full_screen_draw(commandBuffer, *lumaResultImageView, [this, &allocation](CommandBuffer &cb, RenderContext &context) {
-			Device &device         = context.get_device();
-			auto &  modules        = ShaderProgram::Find(std::string("extract_luma_fs"))->GetShaderModules();
-			auto &  pipelineLayout = device.get_resource_cache().request_pipeline_layout(modules);
-			cb.bind_pipeline_layout(pipelineLayout);
-			cb.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-			cb.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
-			cb.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
-		});
-
-		ImageMemoryBarrier imageBarrier{};
-		imageBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		imageBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		imageBarrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		imageBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-		imageBarrier.old_layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		imageBarrier.new_layout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		commandBuffer.image_memory_barrier(*lumaResultImageView, imageBarrier);
-
-
-        PipelineState pipelineState;
-		commandBuffer.set_color_blend_state(pipelineState.get_color_blend_state());
-		commandBuffer.set_depth_stencil_state(pipelineState.get_depth_stencil_state());
-		commandBuffer.set_input_assembly_state(pipelineState.get_input_assembly_state());
-		commandBuffer.set_rasterization_state(pipelineState.get_rasterization_state());
-		commandBuffer.set_viewport_state(pipelineState.get_viewport_state());
-		commandBuffer.set_multisample_state(pipelineState.get_multisample_state());
-
-        BufferMemoryBarrier bufferBarrier{};
-		auto shaderMoudles       = ShaderProgram::Find(std::string("gen_histogram"))->GetShaderModules();
-		vkb::PipelineLayout &histogramPipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
-		commandBuffer.bind_pipeline_layout(histogramPipeline);
-		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-		commandBuffer.bind_buffer(*lumaHistogram, 0, lumaHistogram->get_size(), 0, 1, 0);
-		commandBuffer.bind_image(*lumaResultImageView, *linearClampSampler, 0, 2, 0);
-		commandBuffer.dispatch(groupCountX, 0, 0);
-
-		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-		commandBuffer.buffer_memory_barrier(*lumaHistogram, 0, lumaHistogram->get_size(), bufferBarrier);
-		bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		bufferBarrier.src_access_mask = VK_ACCESS_SHADER_READ_BIT;
-		bufferBarrier.dst_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-		commandBuffer.buffer_memory_barrier(*exposureBuffer, 0, exposureBuffer->get_size(), bufferBarrier);
-
-		shaderMoudles                             = ShaderProgram::Find(std::string("adjust_exposure"))->GetShaderModules();
-		vkb::PipelineLayout &autoExposurePipeline = device->get_resource_cache().request_pipeline_layout(shaderMoudles);
-		commandBuffer.bind_pipeline_layout(autoExposurePipeline);
-		commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
-		commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
-		commandBuffer.bind_buffer(*lumaHistogram, 0, lumaHistogram->get_size(), 0, 2, 0);
-		commandBuffer.dispatch(1, 0, 0);
-	}
-#	endif
-#endif
 }
 
 void forward_plus::render(float delta_time)
@@ -1063,12 +928,12 @@ void forward_plus::draw_gui()
 		return;
 	}
 
-	ImGui::Text("Draw Options:");
-	ImGui::Checkbox("Show Depth", &debugDepth);
-	ImGui::Checkbox("Draw AABB", &drawAABB);
-	ImGui::Checkbox("Draw Light Outline", &drawLight);
+	ImGui::Text("Graphics Options:");
+	//ImGui::Checkbox("Show Depth", &debugDepth);
+	//ImGui::Checkbox("Draw AABB", &drawAABB);
+	//ImGui::Checkbox("Draw Light Outline", &drawLight);
     ImGui::Checkbox("Enable TAA", &enableTemporalAA);
-	ImGui::DragFloat("Exposure", &exposureValue, 0.1, 0.0, 10.0);
+	ImGui::DragFloat("Target Luminance", &targetLumin, 0.01, 0.01, 0.90);
 	ImGui::End();
 }
 

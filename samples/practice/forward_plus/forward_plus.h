@@ -67,13 +67,13 @@ class forward_plus : public vkb::VulkanSample
 	bool drawLight{false};
 	bool debugDepth{false};
 	bool supportBlit{false};
-    bool enableTemporalAA{false};
+    bool enableTemporalAA{true};
     bool historyTAA{false};
 
     int sourceTargetIndex = 0;
     int destTargetIndex = 1;
     float sharpenValue = 0.25f;
-    float exposureValue = 1.0f;
+    float targetLumin = 0.3f;
 
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
 	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};

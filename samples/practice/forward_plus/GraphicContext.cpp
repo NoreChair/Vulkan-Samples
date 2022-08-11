@@ -45,6 +45,7 @@ namespace GraphicContext
 
 	    assert(device.is_image_format_supported(hdrColorFormat));
 	    assert(device.is_image_format_supported(VK_FORMAT_R32_UINT));
+        assert(device.is_image_format_supported(VK_FORMAT_R8_UINT));
 	    // Create Render Image
 
 	    //sdrColorImageView = std::make_shared<ImageView>(*sdrColorImage, VK_IMAGE_VIEW_TYPE_2D);
@@ -67,7 +68,7 @@ namespace GraphicContext
 	    screenShadowImage     = std::make_shared<Image>(device, extent, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	    screenShadowImageView = std::make_shared<ImageView>(*screenShadowImage, VK_IMAGE_VIEW_TYPE_2D);
 
-	    lumaResultImage     = std::make_shared<Image>(device, extent, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+	    lumaResultImage     = std::make_shared<Image>(device, extent, VK_FORMAT_R8_UINT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	    lumaResultImageView = std::make_shared<ImageView>(*lumaResultImage, VK_IMAGE_VIEW_TYPE_2D);
 
 	    velocityImage          = std::make_shared<Image>(device, extent, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);

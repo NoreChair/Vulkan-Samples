@@ -25,9 +25,10 @@ void main(){
     ivec2 textureExtent = ivec2(extent.xy);
     ivec2 dispatchID = min(ivec2(gl_GlobalInvocationID.xy), textureExtent);
     tileHistogram[threadIndex] = 0u;
+	histogram[threadIndex] = 0u;
 
-    memoryBarrierShared();
-    barrier();
+	memoryBarrierShared();
+	barrier();
 
     for(int i = 0; i < textureExtent.y; i += 16){
         uint luma = texelFetch(lumaResult, dispatchID + ivec2(0, i), 0).r;

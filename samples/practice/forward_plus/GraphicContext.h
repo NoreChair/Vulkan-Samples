@@ -23,7 +23,7 @@ namespace GraphicContext{
     extern std::shared_ptr<vkb::core::Buffer>    exposureBuffer;
     extern std::shared_ptr<vkb::core::Buffer>    lumaHistogram;
 
-    extern std::shared_ptr<vkb::core::ImageView> sdrColorImageView;
+    //extern std::shared_ptr<vkb::core::ImageView> sdrColorImageView;
     extern std::shared_ptr<vkb::core::ImageView> hdrColorImageView;
     extern std::shared_ptr<vkb::core::ImageView> sceneDepthImageView;
     extern std::shared_ptr<vkb::core::ImageView> shadowImageView;
