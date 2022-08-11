@@ -27,7 +27,7 @@ class TAA
     void bind_pipeline(vkb::CommandBuffer &commandBuffer, vkb::PipelineState& pipelineState);
 
   private:
-	const static uint32_t k_jittlerSampleCount = 16;
+	const static uint32_t k_jittlerSampleCount = 8;
 	static bool           s_samplePointInited;
 	static glm::vec2      s_hammersleyPoint[k_jittlerSampleCount];
 

@@ -900,7 +900,7 @@ void forward_plus::update_scene(float delta_time)
     if (enableTemporalAA) {
         const auto extent = get_render_context().get_surface_extent();
         auto jitter = temporalAAPass->get_jitter(frame_count);
-        camera->set_jitter((jitter.x - 0.5f)/extent.width, (jitter.y - 0.5f)/extent.height);
+        camera->set_jitter((jitter.x)/extent.width, (jitter.y)/extent.height);
         sourceTargetIndex = (sourceTargetIndex + 1) % 2;
         destTargetIndex = (sourceTargetIndex + 1) % 2;
     }else {
@@ -933,6 +933,7 @@ void forward_plus::draw_gui()
 	//ImGui::Checkbox("Draw AABB", &drawAABB);
 	//ImGui::Checkbox("Draw Light Outline", &drawLight);
     ImGui::Checkbox("Enable TAA", &enableTemporalAA);
+    ImGui::DragFloat("Sharpen", &sharpenValue, 0.01, 0.05, 1.0);
 	ImGui::DragFloat("Target Luminance", &targetLumin, 0.01, 0.01, 0.90);
 	ImGui::End();
 }
