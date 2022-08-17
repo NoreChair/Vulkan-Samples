@@ -56,7 +56,7 @@ void screen_shadow_pass::dispatch(vkb::CommandBuffer &command_buffer)
 	uniforms.extent            = glm::vec4(imageSize.width, imageSize.height, 1.0f / imageSize.width, 1.0f / imageSize.height);
 	uniforms.shadowExtent      = glm::vec4(shadowImageSize.width, shadowImageSize.height, 1.0f / shadowImageSize.width, 1.0f / shadowImageSize.height);
 
-	auto mainProj = main_camera->get_projection();
+	auto mainProj = main_camera->get_projection_without_jitter();
 	mainProj[1][1] *= -1.0;
 	auto lightProj = light_camera->get_projection();
 	lightProj[1][1] *= -1.0;

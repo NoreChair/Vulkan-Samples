@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ShaderProgram.h"
 #include "common/vk_common.h"
 #include "platform/platform.h"
 #include "scene_graph/components/camera.h"
@@ -27,7 +26,7 @@ class TAA
     void bind_pipeline(vkb::CommandBuffer &commandBuffer, vkb::PipelineState& pipelineState);
 
   private:
-	const static uint32_t k_jittlerSampleCount = 8;
+	const static uint32_t k_jittlerSampleCount = 4;
 	static bool           s_samplePointInited;
 	static glm::vec2      s_hammersleyPoint[k_jittlerSampleCount];
 

@@ -15,6 +15,7 @@ namespace GraphicContext{
     extern std::shared_ptr<vkb::core::Image>     lumaResultImage;
     extern std::shared_ptr<vkb::core::Image>     temporalBlendImage[2];
     extern std::shared_ptr<vkb::core::Image>     velocityImage;
+    extern std::shared_ptr<vkb::core::Image>     bloomChainImage[4]; // 2x/4x/8x/16x down sample
 
     extern std::shared_ptr<vkb::core::Buffer>    lightBuffer;
     extern std::shared_ptr<vkb::core::Buffer>    lightGridBuffer;
@@ -32,6 +33,7 @@ namespace GraphicContext{
     extern std::shared_ptr<vkb::core::ImageView> lumaResultImageView;
     extern std::shared_ptr<vkb::core::ImageView> temporalBlendImageView[2];
     extern std::shared_ptr<vkb::core::ImageView> velocityImageView;
+    extern std::shared_ptr<vkb::core::ImageView> bloomChainImageView[4];
 
     extern std::shared_ptr<vkb::core::Sampler>   linearClampSampler;
     extern std::shared_ptr<vkb::core::Sampler>   pointClampSampler;

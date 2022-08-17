@@ -17,7 +17,7 @@ precision highp float;
 #define MIN_VARIANCE_GAMMA 0.75
 #define MAX_VARIANCE_GAMMA 1.25
 
-#define DEPTH_DIFF 1e-2
+#define DEPTH_DIFF 5e-3
 
 layout(set = 0, binding = 0) uniform Uniforms{
     vec4 extent;
@@ -197,36 +197,6 @@ float MinOf(vec4 v){
     return min(min(v.x, v.y), min(v.z, v.w));
 }
 
-vec4 BicubicSampling5(vec2 st)
-{
-    const vec2 rcpResolution = extent.zw;
-    const vec2 fractional = fract( st );
-    const vec2 uv = ( floor( st ) + vec2( 0.5, 0.5 ) ) * rcpResolution;
-
-    // 5-tap bicubic sampling (for Hermite/Carmull-Rom filter) -- (approximate from original 16->9-tap bilinear fetching) 
-    const vec2 t = fractional;
-    const vec2 t2 = fractional * fractional;
-    const vec2 t3 = fractional * fractional * fractional;
-    const float s = 0.5;
-    const vec2 w0 = -s * t3 + 2.0 * s * t2 - s * t;
-    const vec2 w1 = ( 2.0 - s ) * t3 + ( s - 3.0 ) * t2 + 1.0;
-    const vec2 w2 = ( s - 2.0 ) * t3 + s * t2 + s * t;
-    const vec2 w3 = s * t3 - s * t2;
-    const vec2 s0 = w1 + w2;
-    const vec2 f0 = w2 / ( w1 + w2 );
-    const vec2 m0 = uv + f0 * rcpResolution;
-    const vec2 tc0 = uv - 1.f * rcpResolution;
-    const vec2 tc3 = uv + 2.f * rcpResolution;
-
-    const vec4 A = texture( inTemporalColorMap, vec2( m0.x, tc0.y ), 0 );
-    const vec4 B = texture( inTemporalColorMap, vec2( tc0.x, m0.y ), 0 );
-    const vec4 C = texture( inTemporalColorMap, vec2( m0.x, m0.y ), 0 );
-    const vec4 D = texture( inTemporalColorMap, vec2( tc3.x, m0.y ), 0 );
-    const vec4 E = texture( inTemporalColorMap, vec2( m0.x, tc3.y ), 0 );
-    const vec4 color = ( 0.5 * ( A + B ) * w0.x + A * s0.x + 0.5 * ( A + B ) * w3.x ) * w0.y + ( B * w0.x + C * s0.x + D * w3.x ) * s0.y + ( 0.5 * ( B + E ) * w0.x + E * s0.x + 0.5 * ( D + E ) * w3.x ) * w3.y;
-    return color;
-}
-
 vec4 Cubic(float v){
     const vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
     const vec4 s = n * n * n;
@@ -264,11 +234,12 @@ vec4 BicubicSampling4(vec2 st){
 }
 
 vec4 GetHistoryColor(vec2 st, float edge){
-    const bool useBicubic = edge < 0.5;
+    const bool useBicubic = edge > 0.5;
+    // const bool useBicubic = false;
     vec4 historyColor = vec4(1.0, 1.0, 1.0, 1.0);
     if(useBicubic){
-        historyColor = BicubicSampling5(st);
-    }else{
+		historyColor = BicubicSampling4(st);
+	}else{
         historyColor = texture( inTemporalColorMap, (st + vec2(0.5, 0.5)) * extent.zw, 0 );
     }
     return historyColor;
@@ -296,19 +267,20 @@ vec3 ClipHistoryColor(vec3 currentColor, vec3 historyColor, float varianceGamma,
     for(uint i = 0; i < iteratorMax; ++i){
         ivec2 offsetID = groupID + offsets[i];
         int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
-        vec3 c = RGBToYCoCg(GetCurrentColor(offsetIndex));
+        vec3 rgb = GetCurrentColor(offsetIndex);
+        vec3 c = RGBToYCoCg(rgb);
         moment1 += c;
         moment2 += c * c;
-        bBoxMin = min(bBoxMin, c);
-        bBoxMax = max(bBoxMax, c);
+        bBoxMin = min(bBoxMin, rgb);
+        bBoxMax = max(bBoxMax, rgb);
     }
 
     vec3 mean = moment1 * rcpDivider;
     vec3 variance = sqrt(moment2 * rcpDivider - mean * mean) * varianceGamma;
     vec3 minC = YCoCgToRGB(mean - variance);
     vec3 maxC = YCoCgToRGB(mean + variance);
-    // historyColor = clamp(historyColor, max(minC, bBoxMin), min(maxC, bBoxMax));
-    historyColor = clamp(historyColor, minC, maxC);
+    historyColor = clamp(historyColor, max(minC, bBoxMin), min(maxC, bBoxMax));
+    // historyColor = clamp(historyColor, minC, maxC);
     historyColor = max(vec3(0.0,0.0,0.0), historyColor);
     return historyColor;
 }
@@ -317,32 +289,32 @@ vec4 GetFinalColor(vec3 currentColor, vec3 historyColor, float weight){
     vec4 finalColor = vec4(1.0, 1.0, 1.0, 1.0);
     // finalColor.rgb = InverseToneMap_Stanard(mix(ToneMap_Standard(currentColor), ToneMap_Standard(historyColor), weight));
 	finalColor.rgb = mix(currentColor, historyColor, weight);
-	finalColor.a   = 1.0 / (2.0 - weight);
+	finalColor.a   = min(1.0 / (2.0 - weight), 1.0);
 	return finalColor;
 }
 
 vec4 GetAverageColor(vec3 currentColor, ivec2 groupID){
 
-    return vec4(currentColor, 0.5);
+    // return vec4(currentColor, 0.5);
     // 5 samples, current 'x' is used.
-    // const ivec2 offsets[ 4 ] = {ivec2( -1, -1 ), ivec2( 1, -1 ), ivec2( -1, 1 ), ivec2( 1, 1 )};
-    // const uint iteratorMax = 4;
-    // const float rcpDivider = 0.2;
+    const ivec2 offsets[ 4 ] = {ivec2( -1, -1 ), ivec2( 1, -1 ), ivec2( -1, 1 ), ivec2( 1, 1 )};
+    const uint iteratorMax = 4;
+    const float rcpDivider = 0.2;
 
-    // for(uint i = 0; i < iteratorMax; ++i){
-    //     ivec2 offsetID = groupID + offsets[i];
-    //     int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
-    //     currentColor += GetCurrentColor(offsetIndex);
-    // }
-    // return vec4(currentColor * rcpDivider, 0.5);
+    for(uint i = 0; i < iteratorMax; ++i){
+        ivec2 offsetID = groupID + offsets[i];
+        int offsetIndex = offsetID.y * CACHE_COLOR_WIDTH + offsetID.x;
+        currentColor += GetCurrentColor(offsetIndex);
+    }
+    return vec4(currentColor * rcpDivider, 0.5);
 }
 
 void main(){
     uvec3 groupID = gl_WorkGroupID;
     uvec3 groupThreadID = gl_LocalInvocationID;
 
-    ivec2 threadStartID = ivec2(groupID.xy) * ivec2(GROUP_THREAD_NUM_X, GROUP_THREAD_NUM_X);
-    ivec2 groupST = ivec2(groupThreadID.xy);
+	ivec2 threadStartID = ivec2(groupID.xy) * ivec2(GROUP_THREAD_NUM_X, GROUP_THREAD_NUM_Y);
+	ivec2 groupST = ivec2(groupThreadID.xy);
     CacheColorToLSM(threadStartID, groupST);
 
     // Speed factor
@@ -376,10 +348,10 @@ void main(){
         historyColor.rgb = ClipHistoryColor(currentColor, historyColor.rgb, varianceGamma, groupST);
         float weight = historyColor.a * speedFactor * depthFactor;
         finalColor = GetFinalColor(currentColor, historyColor.rgb, weight);
-		// finalColor = vec4(historyColor.rgb, 0.5);
 	}else{
         finalColor = GetAverageColor(currentColor, groupST);
     }
 
     imageStore(outTemporalColorMap, ivec2(gl_GlobalInvocationID.xy), finalColor);
+	// imageStore(outTemporalColorMap, ivec2(gl_GlobalInvocationID.xy), vec4(finalColor.rgb, edge));
 }

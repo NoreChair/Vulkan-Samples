@@ -26,6 +26,7 @@ class compute_pass
 
   protected:
 	void bind_pipeline(vkb::CommandBuffer &command_buffer);
+    void bind_pipeline(vkb::CommandBuffer &commandBuffer, vkb::PipelineState& pipelineState);
 
 	vkb::Device *      device{nullptr};
 	vkb::PipelineState pipeline_state{};

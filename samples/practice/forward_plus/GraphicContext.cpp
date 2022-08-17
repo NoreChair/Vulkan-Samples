@@ -15,6 +15,8 @@ namespace GraphicContext
     std::shared_ptr<vkb::core::Image> lumaResultImage{nullptr};
     std::shared_ptr<vkb::core::Image> temporalBlendImage[2]{nullptr, nullptr};
     std::shared_ptr<vkb::core::Image> velocityImage{nullptr};
+    std::shared_ptr<vkb::core::Image> bloomChainImage[4]{nullptr, nullptr, nullptr, nullptr}; // 2x/4x/8x/16x down sample
+
 
     std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
     std::shared_ptr<vkb::core::Buffer> lightGridBuffer{nullptr};
@@ -32,6 +34,7 @@ namespace GraphicContext
     std::shared_ptr<vkb::core::ImageView> lumaResultImageView{nullptr};
     std::shared_ptr<vkb::core::ImageView> temporalBlendImageView[2]{nullptr, nullptr};
     std::shared_ptr<vkb::core::ImageView> velocityImageView{nullptr};
+    std::shared_ptr<vkb::core::ImageView> bloomChainImageView[4]{nullptr, nullptr, nullptr, nullptr};
 
     std::shared_ptr<vkb::core::Sampler> linearClampSampler{nullptr};
     std::shared_ptr<vkb::core::Sampler> pointClampSampler{nullptr};
@@ -79,6 +82,13 @@ namespace GraphicContext
 		    temporalBlendImageView[i] = std::make_shared<ImageView>(*temporalBlendImage[i], VK_IMAGE_VIEW_TYPE_2D);
 	    }
 
+        for (int i = 0; i < 4; i++)
+        {
+            VkExtent3D bloomSize{extent.width >> (i + 1), extent.height >> (i + 1), 1};
+            bloomChainImage[i] = std::make_shared<Image>(device, bloomSize, hdrColorFormat, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+            bloomChainImageView[i] = std::make_shared<ImageView>(*bloomChainImage[i], VK_IMAGE_VIEW_TYPE_2D);
+        }
+
 	    int tileCount = (int) (glm::ceil(height / 16.0f) * glm::ceil(width / 16.0f));
 
 	    lightBuffer     = std::make_shared<Buffer>(device, sizeof(LightBuffer) * MAX_LIGHTS_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -125,6 +135,11 @@ namespace GraphicContext
 	    temporalBlendImage[1].reset();
 	    velocityImage.reset();
 
+        bloomChainImage[0].reset();
+        bloomChainImage[1].reset();
+        bloomChainImage[2].reset();
+        bloomChainImage[3].reset();
+
 	    lightBuffer.reset();
 	    lightGridBuffer.reset();
 	    //lightMaskBuffer.reset();
@@ -143,6 +158,11 @@ namespace GraphicContext
 	    temporalBlendImageView[0].reset();
 	    temporalBlendImageView[1].reset();
 	    velocityImageView.reset();
+
+        bloomChainImageView[0].reset();
+        bloomChainImageView[1].reset();
+        bloomChainImageView[2].reset();
+        bloomChainImageView[3].reset();
 
 	    linearClampSampler.reset();
         pointClampSampler.reset();

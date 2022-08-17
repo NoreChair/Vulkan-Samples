@@ -25,3 +25,13 @@ void compute_pass::bind_pipeline(vkb::CommandBuffer &command_buffer)
 	command_buffer.set_multisample_state(pipeline_state.get_multisample_state());
 	command_buffer.bind_pipeline_layout(const_cast<vkb::PipelineLayout &>(pipeline_state.get_pipeline_layout()));
 }
+
+void compute_pass::bind_pipeline(vkb::CommandBuffer &commandBuffer, vkb::PipelineState& pipelineState){
+    commandBuffer.set_color_blend_state(pipelineState.get_color_blend_state());
+    commandBuffer.set_depth_stencil_state(pipelineState.get_depth_stencil_state());
+    commandBuffer.set_input_assembly_state(pipelineState.get_input_assembly_state());
+    commandBuffer.set_rasterization_state(pipelineState.get_rasterization_state());
+    commandBuffer.set_viewport_state(pipelineState.get_viewport_state());
+    commandBuffer.set_multisample_state(pipelineState.get_multisample_state());
+    commandBuffer.bind_pipeline_layout(const_cast<vkb::PipelineLayout &>(pipelineState.get_pipeline_layout()));
+}

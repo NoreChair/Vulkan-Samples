@@ -203,7 +203,7 @@ bool forward_plus::prepare(Platform &platform)
 
 	//stats->request_stats({ vkb::StatIndex::cpu_cycles,vkb::StatIndex::gpu_cycles });
 	gui = std::make_unique<vkb::Gui>(*this, platform.get_window(), stats.get());
-#ifdef GenTestSH
+#ifdef SH_TEST
 	GenTestSH(s_shWeight);
 #endif
 	return true;
@@ -367,6 +367,9 @@ void forward_plus::prepare_pipelines()
 
     temporalAAPass = std::make_unique<TAA>(device.get(), render_context.get());
     temporalAAPass->prepare();
+
+    bloomPass = std::make_unique<bloom_pass>(device.get(), render_context.get());
+    bloomPass->prepare();
 }
 
 void forward_plus::prepare_shaders()
@@ -408,7 +411,9 @@ void forward_plus::prepare_shaders()
 		    {"tone_mapping", "forward_plus/hdr/ToneMapping.comp"},
 		    {"temporal_resolve", "forward_plus/taa/TemporalResolvePro.comp"},
 			{"sharpen", "forward_plus/taa/SharpenTAA.comp"},
-		    {"velocity_gen", "forward_plus/velocity/velocity_gen.comp"}
+		    {"velocity_gen", "forward_plus/velocity/velocity_gen.comp"},
+            {"bloom_extract", "forward_plus/bloom/BloomExtractAndDownSample.comp"},
+            {"bloom_blur", "forward_plus/bloom/BlurAndDownSample.comp"},
         };
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
@@ -631,6 +636,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         commandBuffer.bind_buffer(*exposureBuffer, 0, exposureBuffer->get_size(), 0, 1, 0);
         commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 2, 0);
         commandBuffer.bind_image(swapchainView, 0, 3, 0);
+        commandBuffer.bind_image(*bloomChainImageView[3], *linearClampSampler, 0, 4, 0);
         commandBuffer.dispatch(groupCountX, groupCountY, 1);
 
         ImageMemoryBarrier imageBarrier{};
@@ -805,7 +811,7 @@ void forward_plus::render(float delta_time)
 
 		opaquePass->screenShadow = screenShadowImageView.get();
 		opaquePass->draw(commandBuffer, camera, &opaqueNodes);
-#ifdef GenTestSH
+#ifdef SH_TEST
 		DrawSHShpere(*render_context, commandBuffer, camera, sphere_mesh.get(), (glm::vec4 *) s_shWeight);
 #endif
 		opaquePass->draw_sky(commandBuffer, sphere_mesh.get());
@@ -813,7 +819,7 @@ void forward_plus::render(float delta_time)
 		commandBuffer.end_render_pass();
 	}
 
-    if (enableTemporalAA) {
+    {
         ImageMemoryBarrier barrier{};
         barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -823,24 +829,21 @@ void forward_plus::render(float delta_time)
         barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
 
+        bloomPass->dispatch(commandBuffer);
+    }
+
+
+    if (enableTemporalAA) {
         temporalAAPass->gen_velocity_buffer(commandBuffer, camera, sourceTargetIndex);
 
         temporalAAPass->reslove(commandBuffer, sourceTargetIndex, destTargetIndex, sharpenValue);
 
+        ImageMemoryBarrier barrier{};
         barrier.src_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
         barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
         barrier.old_layout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
-    }else{
-        ImageMemoryBarrier barrier{};
-        barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-        barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
     }
@@ -900,7 +903,7 @@ void forward_plus::update_scene(float delta_time)
     if (enableTemporalAA) {
         const auto extent = get_render_context().get_surface_extent();
         auto jitter = temporalAAPass->get_jitter(frame_count);
-        camera->set_jitter((jitter.x)/extent.width, (jitter.y)/extent.height);
+        camera->set_jitter((jitter.x - 0.5f)/extent.width, (jitter.y - 0.5f)/extent.height);
         sourceTargetIndex = (sourceTargetIndex + 1) % 2;
         destTargetIndex = (sourceTargetIndex + 1) % 2;
     }else {

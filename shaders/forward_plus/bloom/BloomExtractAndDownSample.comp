@@ -1,0 +1,103 @@
+#version 450 core
+precision highp float;
+
+
+layout(set = 0, binding = 0) uniform Uniforms
+{
+	vec4  extent;
+    float bloomThreshold;
+};
+
+layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer
+{
+	// from 0 to the end
+	// exposure, 1.0/exposure, exposure, 0.0, initMinLog, initMaxLog, range, rcpRange
+	float exposureBuffer[];
+};
+layout(set = 0, binding = 2) uniform sampler2D sceneColor;
+layout(set = 0, rgba16f, binding = 3) writeonly uniform highp image2D bloomResult;
+
+#ifdef EXTRACT_LUMA
+layout(set = 0, r8ui, binding = 4) writeonly uniform highp uimage2D lumaResult;
+#endif
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+shared vec3 ldsResult[256];
+
+float RGBToLuminance(vec3 rgb)
+{
+	return dot(rgb, vec3(0.212671, 0.715160, 0.072169));
+}
+
+void main()
+{
+	const uvec2 dispatchID = min(gl_GlobalInvocationID.xy, uvec2(extent.xy));
+	const vec2  uv         = vec2(dispatchID) * extent.zw;
+	const vec2  offset     = extent.zw * 1.0;
+	// sampler must be clamp to edge
+	// sample 4x4 grid, calc luma average
+	vec3  sampleColor0 = texture(sceneColor, uv + vec2(-offset.x, -offset.y)).rgb;
+	vec3  sampleColor1 = texture(sceneColor, uv + vec2(-offset.x, offset.y)).rgb;
+	vec3  sampleColor2 = texture(sceneColor, uv + vec2(offset.x, -offset.y)).rgb;
+	vec3  sampleColor3 = texture(sceneColor, uv + offset).rgb;
+
+    float luma0 = RGBToLuminance(sampleColor0);
+	float luma1 = RGBToLuminance(sampleColor1);
+	float luma2 = RGBToLuminance(sampleColor2);
+	float luma3 = RGBToLuminance(sampleColor3);
+
+#ifdef EXTRACT_LUMA
+	float luma = RGBToLuminance(sampleColor0 + sampleColor1 + sampleColor2 + sampleColor3) * 0.25;
+
+	if (luma == 0.0)
+	{
+		imageStore(lumaResult, ivec2(dispatchID), uvec4(luma));
+	}
+	else
+	{
+		float minLog      = exposureBuffer[4];
+		float rcpLogRange = exposureBuffer[7];
+		float logLuma     = clamp((log2(luma) - minLog) * rcpLogRange, 0.0, 1.0);
+		imageStore(lumaResult, ivec2(dispatchID), uvec4(logLuma * 254.0 + 1.0));
+	}
+#endif
+
+	const float epsilon = 1e-4;
+    // find the bloom threshold before exposure
+	const float scaledThreshold = bloomThreshold * exposureBuffer[1];
+
+	// Extract brightness pxiel
+	sampleColor0 *= max(epsilon, luma0 - scaledThreshold) / (luma0 + epsilon);
+	sampleColor1 *= max(epsilon, luma1 - scaledThreshold) / (luma1 + epsilon);
+    sampleColor2 *= max(epsilon, luma2 - scaledThreshold) / (luma2 + epsilon);
+	sampleColor3 *= max(epsilon, luma3 - scaledThreshold) / (luma3 + epsilon);
+
+	// The shimmer filter helps remove stray bright pixels from the bloom buffer by inversely weighting
+    // them by their luminance.  The overall effect is to shrink bright pixel regions around the border.
+    // Lone pixels are likely to dissolve completely.  This effect can be tuned by adjusting the shimmer
+    // filter inverse strength.  The bigger it is, the less a pixel's luminance will matter.
+    const float kShimmerFilterInverseStrength = 1.0f;
+    float weight0 = 1.0f / (luma0 + kShimmerFilterInverseStrength);
+    float weight1 = 1.0f / (luma1 + kShimmerFilterInverseStrength);
+    float weight2 = 1.0f / (luma2 + kShimmerFilterInverseStrength);
+    float weight3 = 1.0f / (luma3 + kShimmerFilterInverseStrength);
+    const float weightSum = weight0 + weight1 + weight2 + weight3;
+
+	vec3 result = (sampleColor0 * weight0 + sampleColor1 * weight1 + sampleColor2 * weight2 + sampleColor3 * weight3) / weightSum;
+	ldsResult[gl_LocalInvocationIndex] = result;
+
+	memoryBarrierShared();
+	barrier();
+
+	if (gl_LocalInvocationIndex < 64)
+	{
+		const uvec2 mappedLocalID = uvec2(gl_LocalInvocationIndex % 8, gl_LocalInvocationIndex / 8);
+		const uvec2 threadStartID = gl_WorkGroupID.xy * 16;
+		const uint  cacheStartID  = mappedLocalID.y  * 2 * 16 + mappedLocalID.x * 2;
+
+		vec3 sum = ldsResult[cacheStartID] + ldsResult[cacheStartID + 1] + ldsResult[cacheStartID + 16] + ldsResult[cacheStartID + 16 + 1];
+		sum *= 0.25;
+		imageStore(bloomResult, ivec2(threadStartID / 2 + mappedLocalID), vec4(sum, 1.0));
+	}
+}
