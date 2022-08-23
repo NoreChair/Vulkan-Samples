@@ -605,6 +605,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         struct {
             glm::vec4 extent;
             float targetLuma;
+            float bloomScale;
             float adaptationRate;
             float minExposure;
             float maxExposure;
@@ -612,6 +613,7 @@ void forward_plus::process_HDR(vkb::CommandBuffer &commandBuffer)
         }toneMapUniforms;
         toneMapUniforms.extent = glm::vec4((float)imageExtent.width, (float)imageExtent.height, 1.0f / (float)imageExtent.width, 1.0f / (float)imageExtent.height);
         toneMapUniforms.targetLuma = targetLumin;
+        toneMapUniforms.bloomScale = bloomScale;
         toneMapUniforms.adaptationRate = 0.05f;
         toneMapUniforms.minExposure = -8.0f;
         toneMapUniforms.maxExposure = 8.0f;
@@ -890,6 +892,7 @@ void forward_plus::update(float delta_time)
 	update_gui(delta_time);
 	render(delta_time);
 
+    bloomPass->set_bloom_threshold(bloomThreshold);
     if (enableTemporalAA) {
         temporalAAPass->set_previous_view_proj(camera->get_view(), camera->get_projection());
     }
@@ -938,6 +941,8 @@ void forward_plus::draw_gui()
     ImGui::Checkbox("Enable TAA", &enableTemporalAA);
     ImGui::DragFloat("Sharpen", &sharpenValue, 0.01, 0.05, 1.0);
 	ImGui::DragFloat("Target Luminance", &targetLumin, 0.01, 0.01, 0.90);
+    ImGui::DragFloat("Bloom Threshold", &bloomThreshold, 0.01, 0.01, 1.0);
+    ImGui::DragFloat("Bloom Scale", &bloomScale, 0.01, 0.1, 10.0);
 	ImGui::End();
 }
 

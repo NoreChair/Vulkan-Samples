@@ -1,13 +1,15 @@
 #version 450 core
 precision highp float;
 
-layout(set = 0, binding = 0) uniform Uniforms{
-    vec4 extent;
-    float targetLuma;
-    float adaptationRate;
-    float minExposure;
-    float maxExposure;
-    uint pixelCount;
+layout(set = 0, binding = 0) uniform Uniforms
+{
+	vec4  extent;
+	float targetLuma;
+	float bloomScale;
+	float adaptationRate;
+	float minExposure;
+	float maxExposure;
+	uint  pixelCount;
 };
 
 layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer{
