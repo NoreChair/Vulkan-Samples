@@ -23,7 +23,7 @@ shared vec3 blurredColor[GROUP_THREAD_NUM * GROUP_THREAD_NUM];
 void CacheColorToLDS(const uvec2 startID, const uvec2 groupThreadID)
 {
 	uvec2 mulTowID = groupThreadID * 2;
-	vec2  sampleUV = (vec2(startID + mulTowID) - 0.5) * sourceExtents.zw;
+	vec2  sampleUV = (vec2(startID + mulTowID - BLUR_RADIUS) + 0.5) * sourceExtents.zw;
 
 	vec4 r4 = textureGather(source, sampleUV, 0);
 	vec4 g4 = textureGather(source, sampleUV, 1);
@@ -45,7 +45,6 @@ void main()
 	const float gaussianWeight[BLUR_WEIGHT_COUNT] = {0.0027, 0.0474, 0.1166, 0.2001, 0.2664, 0.2001, 0.1166, 0.0474, 0.0027};
 
 	const uvec2 groupThreadID    = gl_LocalInvocationID.xy;
-	const uint  groupThreadIndex = groupThreadID.y * GROUP_THREAD_NUM + groupThreadID.x;
 	const uvec2 threadStartID    = gl_WorkGroupID.xy * GROUP_THREAD_NUM;
 	CacheColorToLDS(threadStartID, groupThreadID);
 
@@ -60,11 +59,11 @@ void main()
 		color += ldsColor[cacheIndex + i] * gaussianWeight[i + BLUR_RADIUS];
 	}
 
-	blurredColor[groupThreadIndex] = color;
+	blurredColor[gl_LocalInvocationIndex] = color;
 	memoryBarrierShared();
 	barrier();
 
-	ldsColor[cacheIndex] = blurredColor[groupThreadIndex];
+	ldsColor[cacheIndex] = blurredColor[gl_LocalInvocationIndex];
 	memoryBarrierShared();
 	barrier();
 
@@ -75,13 +74,13 @@ void main()
 		color += ldsColor[cacheIndex + i * CACHE_COLOR_SIZE] * gaussianWeight[i + BLUR_RADIUS];
 	}
 
-	blurredColor[groupThreadIndex] = color;
+	blurredColor[gl_LocalInvocationIndex] = color;
 	memoryBarrierShared();
 	barrier();
 
-	if (groupThreadIndex < 16)
+	if (gl_LocalInvocationIndex < 16)
 	{
-		const uvec2 st           = uvec2((groupThreadIndex % 4), (groupThreadIndex / 4));
+		const uvec2 st           = uvec2((gl_LocalInvocationIndex % 4), (gl_LocalInvocationIndex / 4));
 		const uint  cacheStartID = st.y * 2 * GROUP_THREAD_NUM + st.x * 2;
 
 		vec3 result = blurredColor[cacheStartID] + blurredColor[cacheStartID + 1] + blurredColor[cacheStartID + GROUP_THREAD_NUM] + blurredColor[cacheStartID + GROUP_THREAD_NUM + 1];

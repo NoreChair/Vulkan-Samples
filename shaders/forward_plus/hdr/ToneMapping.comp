@@ -107,9 +107,8 @@ void main(){
     // vec3 bloom = textureLod(bloomResult, uv, 0.0).rgb;
 	vec3 bloom = BicubicSampling4(vec2(dispatchID) * 0.0625).rgb;
 
-	// hdrColor += bloom;
-    hdrColor *= exposureBuffer[0];
 	hdrColor += bloom * bloomScale;
+	hdrColor *= exposureBuffer[0];
     // TODO : hdr display output
 
     // hdr scene refers to display refers

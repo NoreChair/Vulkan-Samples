@@ -942,7 +942,7 @@ void forward_plus::draw_gui()
     ImGui::DragFloat("Sharpen", &sharpenValue, 0.01, 0.05, 1.0);
 	ImGui::DragFloat("Target Luminance", &targetLumin, 0.01, 0.01, 0.90);
     ImGui::DragFloat("Bloom Threshold", &bloomThreshold, 0.01, 0.01, 1.0);
-    ImGui::DragFloat("Bloom Scale", &bloomScale, 0.01, 0.1, 10.0);
+    ImGui::DragFloat("Bloom Scale", &bloomScale, 0.01, 0.1, 2.0);
 	ImGui::End();
 }
 

@@ -77,7 +77,7 @@ class forward_plus : public vkb::VulkanSample
     float sharpenValue = 0.25f;
     float targetLumin = 0.3f;
     float bloomThreshold = 0.05f;
-    float bloomScale = 6.5f;
+    float bloomScale = 0.7f;
 
 	std::unique_ptr<vkb::sg::SubMesh> sphere_mesh{nullptr};
 	std::unique_ptr<vkb::sg::SubMesh> cube_mesh{nullptr};

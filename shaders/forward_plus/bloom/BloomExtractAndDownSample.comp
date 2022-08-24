@@ -1,11 +1,10 @@
 #version 450 core
 precision highp float;
 
-
 layout(set = 0, binding = 0) uniform Uniforms
 {
 	vec4  extent;
-    float bloomThreshold;
+	float bloomThreshold;
 };
 
 layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer
@@ -37,12 +36,12 @@ void main()
 	const vec2  offset     = extent.zw * 1.0;
 	// sampler must be clamp to edge
 	// sample 4x4 grid, calc luma average
-	vec3  sampleColor0 = texture(sceneColor, uv + vec2(-offset.x, -offset.y)).rgb;
-	vec3  sampleColor1 = texture(sceneColor, uv + vec2(-offset.x, offset.y)).rgb;
-	vec3  sampleColor2 = texture(sceneColor, uv + vec2(offset.x, -offset.y)).rgb;
-	vec3  sampleColor3 = texture(sceneColor, uv + offset).rgb;
+	vec3 sampleColor0 = texture(sceneColor, uv + vec2(-offset.x, -offset.y)).rgb;
+	vec3 sampleColor1 = texture(sceneColor, uv + vec2(-offset.x, offset.y)).rgb;
+	vec3 sampleColor2 = texture(sceneColor, uv + vec2(offset.x, -offset.y)).rgb;
+	vec3 sampleColor3 = texture(sceneColor, uv + offset).rgb;
 
-    float luma0 = RGBToLuminance(sampleColor0);
+	float luma0 = RGBToLuminance(sampleColor0);
 	float luma1 = RGBToLuminance(sampleColor1);
 	float luma2 = RGBToLuminance(sampleColor2);
 	float luma3 = RGBToLuminance(sampleColor3);
@@ -64,27 +63,29 @@ void main()
 #endif
 
 	const float epsilon = 1e-4;
-    // find the bloom threshold before exposure
-	const float scaledThreshold = bloomThreshold * exposureBuffer[1];
+	// find the bloom threshold before exposure
+	const float scaledThreshold = bloomThreshold;
 
 	// Extract brightness pxiel
 	sampleColor0 *= max(epsilon, luma0 - scaledThreshold) / (luma0 + epsilon);
 	sampleColor1 *= max(epsilon, luma1 - scaledThreshold) / (luma1 + epsilon);
-    sampleColor2 *= max(epsilon, luma2 - scaledThreshold) / (luma2 + epsilon);
+	sampleColor2 *= max(epsilon, luma2 - scaledThreshold) / (luma2 + epsilon);
 	sampleColor3 *= max(epsilon, luma3 - scaledThreshold) / (luma3 + epsilon);
 
 	// The shimmer filter helps remove stray bright pixels from the bloom buffer by inversely weighting
-    // them by their luminance.  The overall effect is to shrink bright pixel regions around the border.
-    // Lone pixels are likely to dissolve completely.  This effect can be tuned by adjusting the shimmer
-    // filter inverse strength.  The bigger it is, the less a pixel's luminance will matter.
-    const float kShimmerFilterInverseStrength = 1.0f;
-    float weight0 = 1.0f / (luma0 + kShimmerFilterInverseStrength);
-    float weight1 = 1.0f / (luma1 + kShimmerFilterInverseStrength);
-    float weight2 = 1.0f / (luma2 + kShimmerFilterInverseStrength);
-    float weight3 = 1.0f / (luma3 + kShimmerFilterInverseStrength);
-    const float weightSum = weight0 + weight1 + weight2 + weight3;
+	// them by their luminance.  The overall effect is to shrink bright pixel regions around the border.
+	// Lone pixels are likely to dissolve completely.  This effect can be tuned by adjusting the shimmer
+	// filter inverse strength.  The bigger it is, the less a pixel's luminance will matter.
+	const float kShimmerFilterInverseStrength = 1.0f;
+
+	float weight0 = 1.0f / (luma0 + kShimmerFilterInverseStrength);
+	float weight1 = 1.0f / (luma1 + kShimmerFilterInverseStrength);
+	float weight2 = 1.0f / (luma2 + kShimmerFilterInverseStrength);
+	float weight3 = 1.0f / (luma3 + kShimmerFilterInverseStrength);
+	const float weightSum = weight0 + weight1 + weight2 + weight3;
 
 	vec3 result = (sampleColor0 * weight0 + sampleColor1 * weight1 + sampleColor2 * weight2 + sampleColor3 * weight3) / weightSum;
+	// vec3 result                        = (sampleColor0 + sampleColor1 + sampleColor2 + sampleColor3) * 0.25;
 	ldsResult[gl_LocalInvocationIndex] = result;
 
 	memoryBarrierShared();
@@ -94,7 +95,7 @@ void main()
 	{
 		const uvec2 mappedLocalID = uvec2(gl_LocalInvocationIndex % 8, gl_LocalInvocationIndex / 8);
 		const uvec2 threadStartID = gl_WorkGroupID.xy * 16;
-		const uint  cacheStartID  = mappedLocalID.y  * 2 * 16 + mappedLocalID.x * 2;
+		const uint  cacheStartID  = mappedLocalID.y * 2 * 16 + mappedLocalID.x * 2;
 
 		vec3 sum = ldsResult[cacheStartID] + ldsResult[cacheStartID + 1] + ldsResult[cacheStartID + 16] + ldsResult[cacheStartID + 16 + 1];
 		sum *= 0.25;
