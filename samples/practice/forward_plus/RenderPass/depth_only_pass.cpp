@@ -9,6 +9,13 @@
 using namespace vkb;
 using namespace vkb::sg;
 
+struct alignas(16) GlobalUniform
+{
+	glm::mat4 model;
+	glm::mat4 view_project;
+	glm::vec3 camera_position;
+};
+
 depth_only_pass::depth_only_pass(vkb::RenderContext &render_context, vkb::ShaderSource &&vertex_shader, vkb::ShaderSource &&fragment_shader) :
     Subpass{render_context, std::move(vertex_shader), std::move(fragment_shader)}
 {

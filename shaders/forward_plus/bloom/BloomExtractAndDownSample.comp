@@ -14,7 +14,7 @@ layout(set = 0, std430, binding = 1) readonly buffer ExposureBuffer
 	float exposureBuffer[];
 };
 layout(set = 0, binding = 2) uniform sampler2D sceneColor;
-layout(set = 0, rgba16f, binding = 3) writeonly uniform highp image2D bloomResult;
+layout(set = 0, r11f_g11f_b10f, binding = 3) writeonly uniform highp image2D bloomResult;
 
 #ifdef EXTRACT_LUMA
 layout(set = 0, r8ui, binding = 4) writeonly uniform highp uimage2D lumaResult;

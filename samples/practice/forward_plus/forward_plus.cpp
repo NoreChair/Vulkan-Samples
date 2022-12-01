@@ -793,17 +793,23 @@ void forward_plus::render(float delta_time)
 
 		std::vector<LoadStoreInfo> loadStoreInfos;
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
+        loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE});
 		loadStoreInfos.emplace_back(LoadStoreInfo{VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE});
 
 		std::vector<SubpassInfo> subPassInfos;
-		subPassInfos.emplace_back(SubpassInfo{{}, {0}, {}, false, 0, VK_RESOLVE_MODE_NONE});
+		subPassInfos.emplace_back(SubpassInfo{{}, {0,1,2}, {}, false, 0, VK_RESOLVE_MODE_NONE});
 
 		std::vector<Attachment> attachments;
 		attachments.emplace_back(Attachment{hdrColorImageView->get_format(), hdrColorImage->get_sample_count(), hdrColorImage->get_usage()});
+        attachments.emplace_back(Attachment{sceneNormalImageView->get_format(), sceneNormalImage->get_sample_count(), sceneNormalImage->get_usage()});
+        attachments.emplace_back(Attachment{sceneParamsImageView->get_format(), sceneParamsImage->get_sample_count(), sceneParamsImage->get_usage()});
 		attachments.emplace_back(Attachment{sceneDepthImageView->get_format(), sceneDepthImage->get_sample_count(), sceneDepthImage->get_usage()});
 
 		std::vector<ImageView *> imageViews;
 		imageViews.push_back(hdrColorImageView.get());
+        imageViews.push_back(sceneNormalImageView.get());
+        imageViews.push_back(sceneParamsImageView.get());
 		imageViews.push_back(sceneDepthImageView.get());
 
 		auto &renderPass  = device->get_resource_cache().request_render_pass(attachments, loadStoreInfos, subPassInfos);

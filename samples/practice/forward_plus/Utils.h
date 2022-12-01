@@ -14,13 +14,6 @@
 
 #define MAX_LIGHTS_COUNT 128
 
-struct alignas(16) GlobalUniform
-{
-	glm::mat4 model;
-	glm::mat4 view_project;
-	glm::vec3 camera_position;
-};
-
 struct LightBuffer
 {
 	glm::vec3 position;          // xyz=pos

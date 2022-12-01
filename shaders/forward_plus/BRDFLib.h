@@ -10,7 +10,7 @@
         * Eric Heitz/Joe Schutte blogs and papers
 */
 
-#define M_PI 3.141592653;
+#define M_PI 3.141592653
 
 float Pow2(float v)
 {
@@ -27,16 +27,45 @@ float saturate(float v)
 	return clamp(v, 0.0, 1.0);
 }
 
+vec2 saturate(vec2 v)
+{
+	return clamp(v, vec2(0.0), vec2(1.0));
+}
+
+vec3 saturate(vec3 v)
+{
+	return clamp(v, vec3(0.0), vec3(1.0));
+}
+
+vec4 saturate(vec4 v)
+{
+	return clamp(v, vec4(0.0), vec4(1.0));
+}
+
 float BeckmannToPhongRoughtness(float roughness)
 {
 	return 2.0 / Pow2(roughness) - 2.0;
+}
+
+vec2 Hammersley(uint i, float numSamples)
+{
+	uint b = i;
+	b      = (b << 16u) | (b >> 16u);
+	b      = ((b & 0x55555555u) << 1u) | ((b & 0xAAAAAAAAu) >> 1u);
+	b      = ((b & 0x33333333u) << 2u) | ((b & 0xCCCCCCCCu) >> 2u);
+	b      = ((b & 0x0F0F0F0Fu) << 4u) | ((b & 0xF0F0F0F0u) >> 4u);
+	b      = ((b & 0x00FF00FFu) << 8u) | ((b & 0xFF00FF00u) >> 8u);
+
+	float radicalInverseVDC = float(b) * 2.3283064365386963e-10;
+
+	return vec2((float(i) / numSamples), radicalInverseVDC);
 }
 
 // [ Duff et al. 2017, "Building an Orthonormal Basis, Revisited" ]
 mat3 GetTangentBasis(vec3 tangentZ)
 {
 	const float sign = tangentZ.z >= 0 ? 1 : -1;
-	const float a    = -rcp(sign + tangentZ.z);
+	const float a    = -1.0 / (sign + tangentZ.z);
 	const float b    = tangentZ.x * tangentZ.y * a;
 
 	vec3 tangentX = {1 + sign * a * Pow2(tangentZ.x), sign * b, -sign * tangentZ.x};
@@ -125,11 +154,11 @@ float V_BeckmannApproximate(float ndotv, float ndotl, float roughness)
 }
 
 // GGX Normal Distribution Function
-float D_GGX(float NdotH, float roughness)
+float D_GGX(float ndoth, float roughness)
 {
 	float roughness2 = roughness * roughness;
-	float f          = (NdotH * roughness2 - NdotH) * NdotH + 1.0;
-	return roughness2 / (PI * f * f);
+	float f          = (ndoth * roughness2 - ndoth) * ndoth + 1.0;
+	return roughness2 / (M_PI * f * f);
 }
 
 float D_Beckmann(float m, float t)
@@ -137,6 +166,29 @@ float D_Beckmann(float m, float t)
 	float m2 = m * m;
 	float t2 = t * t;
 	return exp((t2 - 1) / (m2 * t2)) / (m2 * t2 * t2);
+}
+
+/*													ambient										     	  */
+
+vec3 EnvironmentBRDF(float roughness, float nov, vec3 rf0)
+{
+	// (1.0/0.96, 0.475, (0.0275-0.25*0.04) / 0.96, 0.25);
+	const vec4 c0 = vec4(1.0416667, 0.475, 0.018229167, 0.25);
+	const vec4 c1 = vec4(0.0, 0.0, -0.015625, 0.75);
+	vec4       r  = roughness * c0 + c1;
+	float      a0 = r.x * min(t.y, exp2(-9.28 * nov)) + r.z;
+	float      a1 = r.w;
+	return saturate(a0 + rf0 * (a1 - a0));
+}
+
+vec3 EnviromentBRDF_G_Modified(float roughness, float nov, vec3 rf0)
+{
+	const vec4 c0   = vec4(-1.0, -0.0275, -0.572, 0.022);
+	const vec4 c1   = vec4(1.0, 0.0425, 1.04, -0.04);
+	vec4       r    = roughness * c0 + c1;
+	float      a004 = min(r.x * r.x, exp2(-9.28 * nov)) * r.x + r.y;
+	vec2       ab   = vec2(-1.04, 1.04) * a004 + r.zw;
+	return saturate(ab.x * rf0 + ab.y);
 }
 
 /**************************************************************************************************************/
@@ -239,7 +291,7 @@ float VisibleGGXPDF_Aniso(vec3 V, vec3 H, vec2 a)
 	float a2   = a.x * a.y;
 	vec3  Hs   = vec3(a.y * H.x, a.x * H.y, a2 * NoH);
 	float S    = dot(Hs, Hs);
-	float D    = (1.0f / PI) * a2 * Pow2(a2 / S);
+	float D    = (1.0f / M_PI) * a2 * Pow2(a2 / S);
 	float LenV = length(vec3(V.x * Alpha.x, V.y * Alpha.y, NoV));
 	float pdf  = (2.0 * D * VoH) / (NoV + LenV);
 	return pdf;
@@ -311,7 +363,7 @@ vec3 IntergralBRDF_GGXD_Template(vec3 view, vec3 normal, float roughness, int sa
 {
 	float ndotv          = saturate(dot(normal, view));
 	float roughness2     = roughness * roughness;
-	mat3  tangentToWorld = GetTangentBasis(normal);
+	mat3  worldToTangent = transpose(GetTangentBasis(normal));
 	vec3  sepcularColor  = vec3(1.0, 1.0, 1.0);
 	vec3  value          = vec3(0.0, 0.0, 0.0);
 

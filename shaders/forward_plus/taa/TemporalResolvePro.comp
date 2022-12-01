@@ -173,7 +173,7 @@ void CacheColorToLSM(ivec2 startID, ivec2 groupThreadID){
     // One pixel border
     if(groupThreadID.x < 5 && groupThreadID.y < 5){
         ivec2 mulTowID = groupThreadID * 2;
-        vec2 sampleUV = (vec2(startID + mulTowID) - 0.5) * extent.zw;
+        vec2 sampleUV = (vec2(startID + mulTowID) + 0.5) * extent.zw;
 
         vec4 r4 = textureGather(colorMap, sampleUV, 0);
         vec4 g4 = textureGather(colorMap, sampleUV, 1);

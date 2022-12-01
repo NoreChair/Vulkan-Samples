@@ -3,17 +3,20 @@ precision highp float;
 
 #define MAX_LIGHTS 128
 #define TILE_SIZE (4 + MAX_LIGHTS)              // align with 128 bit
-#define LIGHT_ATT_CUTOFF 1e-2
+#define LIGHT_ATT_CUTOFF 1e-4
 
 layout(location = 0) in vec3 v_pos;     // world position
 layout(location = 1) in vec2 v_uv;
 layout(location = 2) in vec3 v_normal;
 
 layout(location = 0) out vec4 o_color;
+layout(location = 1) out vec2 o_normal;
+layout(location = 2) out vec2 o_params;
 
 layout(set = 0, binding = 0) uniform GlobalUniform
 {
 	mat4  model;
+	mat4  view;
 	mat4  view_proj;
 	vec3  camera_position;
 };
@@ -43,10 +46,10 @@ layout(set = 0, std430, binding = 3) readonly buffer LightGrid
     uint lightGridData[];
 };
 
-layout(set = 0, std430, binding = 4) readonly buffer LightGridBitMask
-{
-    uint lightGridBitMaskData[];
-};
+// layout(set = 0, std430, binding = 4) readonly buffer LightGridBitMask
+// {
+//     uint lightGridBitMaskData[];
+// };
 
 layout(push_constant, std430) uniform MaterialUniform
 {
@@ -123,6 +126,7 @@ vec3 F_Schlick_Roughness(vec3 f0, float cos_theta, float roughness)
 }
 
 // [0] Diffuse Term
+// for smoothness surface
 float Fr_DisneyDiffuse(float NdotV, float NdotL, float LdotH, float roughness)
 {
 	float E_bias        = 0.0 * (1.0 - roughness) + 0.5 * roughness;
@@ -158,8 +162,9 @@ float D_GGX(float NdotH, float roughness)
 	return alphaRoughnessSq / (PI * f * f);
 }
 
-vec3 normal()
+vec3 GetNormal()
 {
+#ifdef HAS_NORMAL_TEXTURE
 	vec3 pos_dx = dFdx(v_pos);
 	vec3 pos_dy = dFdy(v_pos);
 	vec3 st1    = dFdx(vec3(v_uv, 0.0));
@@ -170,11 +175,10 @@ vec3 normal()
 	vec3 B      = normalize(cross(N, T));
 	mat3 TBN    = mat3(T, B, N);
 
-#ifdef HAS_NORMAL_TEXTURE
 	vec3 n = texture(normal_texture, v_uv).rgb;
 	return normalize(TBN * (2.0 * n - 1.0));
 #else
-	return normalize(TBN[2].xyz);
+	return normalize(v_normal);
 #endif
 }
 
@@ -205,6 +209,23 @@ float smoothstep01(float t){
 	return t * t * (3.0 - 2.0 * t);
 }
 
+vec2 EncodeNormal(vec3 n)
+{
+	float f = sqrt(8.0 * n.z + 8.0);
+	return n.xy / f + 0.5;
+}
+
+vec3 DecodeNormal(vec2 enc)
+{
+	vec2 fenc = enc * 4.0 - 2.0;
+	float f   = dot(fenc, fenc);
+	float g   = sqrt(1.0 - f / 4.0);
+	vec3 n;
+	n.xy = fenc * g;
+	n.z  = 1.0 - f / 2.0;
+	return n;
+}
+
 void main(void)
 {
 	vec3 F0 		 = vec3(0.04);
@@ -230,7 +251,7 @@ void main(void)
 	vec2 screenUV = gl_FragCoord.xy / vec2(viewPort);
 	float shadowAttr = texture(main_light_shadow_texture, screenUV).r;
 
-	vec3  N     = normal();
+	vec3  N     = GetNormal();
 	vec3  V     = normalize(camera_position - v_pos);
 	float NdotV = saturate(dot(N, V));
 
@@ -280,7 +301,8 @@ void main(void)
 		float NdotH = saturate(dot(N, H));
 		float NdotL = saturate(dot(N, L));
 
-		if(NdotL * atten < 1e-4){
+		if (NdotL * atten < LIGHT_ATT_CUTOFF)
+		{
 			continue;
 		}
 
@@ -295,7 +317,8 @@ void main(void)
 
     // Cone Light
     index_offset += point_light_count;
-    for(uint i = 0u; i < cone_light_count; ++i){
+    for(uint i = 0u; i < cone_light_count; ++i)
+	{
         LightBufferData light_data = ConvertLightBufferByte(lightBufferData[lightGridData[index_offset + i]].value);
 
 		vec3 world_to_light = light_data.position - v_pos;
@@ -314,7 +337,8 @@ void main(void)
 		float NdotH = saturate(dot(N, H));
 		float NdotL = saturate(dot(N, L));
 
-		if(NdotL * atten < 1e-4){
+		if (NdotL * atten < LIGHT_ATT_CUTOFF)
+		{
 			continue;
 		}
 
@@ -335,4 +359,6 @@ void main(void)
 	vec3 ibl_diffuse   = irradiance * base_color.rgb;
 	vec3 ambient_color = ibl_diffuse;
 	o_color = vec4(ambient_color + light_contribution, base_color.a);
+	o_normal = EncodeNormal(mat3(view) * N);
+	o_params = vec2(roughness, metallic);
 }

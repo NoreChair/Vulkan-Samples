@@ -13,6 +13,14 @@
 using namespace vkb;
 using namespace vkb::sg;
 
+struct alignas(16) GlobalUniform
+{
+	glm::mat4 model;
+    glm::mat4 view;
+	glm::mat4 view_project;
+	glm::vec3 camera_position;
+};
+
 opaque_pass::opaque_pass(RenderContext &render_context, ShaderSource &&vertex_shader, ShaderSource &&fragment_shader, VkExtent2D extent) :
     Subpass{render_context, std::move(vertex_shader), std::move(fragment_shader)},
     render_extent(extent)
@@ -42,6 +50,9 @@ void opaque_pass::prepare()
 	ColorBlendState           defaultColorState;
 	ColorBlendAttachmentState defaultAttaState;
 	defaultColorState.attachments.push_back(defaultAttaState);
+    defaultColorState.attachments.push_back(defaultAttaState);
+    defaultColorState.attachments.push_back(defaultAttaState);
+
 	pipeline_state.set_color_blend_state(defaultColorState);
     sky_pipeline_state.set_color_blend_state(defaultColorState);
 
@@ -148,6 +159,7 @@ void opaque_pass::update_global_uniform_buffers(vkb::CommandBuffer &commandBuffe
 
 	GlobalUniform globalUniform;
 	globalUniform.model           = transform.get_world_matrix();
+    globalUniform.view            = render_camera->get_view();
 	globalUniform.view_project    = vkb::vulkan_style_projection(render_camera->get_projection()) * render_camera->get_view();
 	globalUniform.camera_position = render_camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
 	allocation.update(globalUniform);
