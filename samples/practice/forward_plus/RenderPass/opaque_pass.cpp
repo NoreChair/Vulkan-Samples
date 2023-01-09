@@ -17,8 +17,8 @@ struct alignas(16) GlobalUniform
 {
 	glm::mat4 model;
     glm::mat4 view;
-	glm::mat4 view_project;
-	glm::vec3 camera_position;
+	glm::mat4 project;
+	glm::vec4 camera_position;
 };
 
 opaque_pass::opaque_pass(RenderContext &render_context, ShaderSource &&vertex_shader, ShaderSource &&fragment_shader, VkExtent2D extent) :
@@ -160,8 +160,8 @@ void opaque_pass::update_global_uniform_buffers(vkb::CommandBuffer &commandBuffe
 	GlobalUniform globalUniform;
 	globalUniform.model           = transform.get_world_matrix();
     globalUniform.view            = render_camera->get_view();
-	globalUniform.view_project    = vkb::vulkan_style_projection(render_camera->get_projection()) * render_camera->get_view();
-	globalUniform.camera_position = render_camera->get_node()->get_component<vkb::sg::Transform>().get_translation();
+	globalUniform.project         = vkb::vulkan_style_projection(render_camera->get_projection());
+	globalUniform.camera_position = glm::vec4(render_camera->get_node()->get_component<vkb::sg::Transform>().get_translation(), 1.0);
 	allocation.update(globalUniform);
 	commandBuffer.bind_buffer(allocation.get_buffer(), allocation.get_offset(), allocation.get_size(), 0, 0, 0);
 }

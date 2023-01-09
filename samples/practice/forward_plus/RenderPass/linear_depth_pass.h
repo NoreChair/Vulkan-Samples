@@ -11,13 +11,15 @@ class linear_depth_pass : public compute_pass
 
 	virtual ~linear_depth_pass() = default;
 
-	void dispatch(vkb::CommandBuffer &command_buffer, vkb::core::ImageView* src, vkb::core::ImageView* dest, vkb::sg::Camera *camera);
+	void dispatch(vkb::CommandBuffer &command_buffer, vkb::sg::Camera *camera, int srcIndex);
 
 	void dispatch(vkb::CommandBuffer &command_buffer) override;
 
   private:
+    int srcID;
 	vkb::RenderContext   *context{nullptr};
-	vkb::sg::Camera		 *render_camera{nullptr};
+    vkb::sg::Camera		 *render_camera{nullptr};
 	vkb::core::ImageView *scene_depth{nullptr};
 	vkb::core::ImageView *linear_depth{nullptr};
+    vkb::PipelineState   depthChainPipeline;
 };

@@ -22,6 +22,12 @@ class TAA
         prevView = view;
         prevProj = projection;
     }
+
+    static const glm::vec2* GetHammersleyPoints(uint32_t* count){
+        *count = k_jittlerSampleCount;
+        return s_hammersleyPoint;
+    };
+
   private:
     void bind_pipeline(vkb::CommandBuffer &commandBuffer, vkb::PipelineState& pipelineState);
 
