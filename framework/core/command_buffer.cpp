@@ -526,6 +526,30 @@ void CommandBuffer::image_memory_barrier(const core::ImageView &image_view, cons
 	    &image_memory_barrier);
 }
 
+void CommandBuffer::image_memory_barrier(const core::ImageView &image_view, const ImageMemoryBarrier &memory_barrier, const VkImageSubresourceRange &range)
+{
+    VkImageMemoryBarrier image_memory_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+	image_memory_barrier.oldLayout        = memory_barrier.old_layout;
+	image_memory_barrier.newLayout        = memory_barrier.new_layout;
+	image_memory_barrier.image            = image_view.get_image().get_handle();
+	image_memory_barrier.subresourceRange = range;
+	image_memory_barrier.srcAccessMask    = memory_barrier.src_access_mask;
+	image_memory_barrier.dstAccessMask    = memory_barrier.dst_access_mask;
+
+	VkPipelineStageFlags src_stage_mask = memory_barrier.src_stage_mask;
+	VkPipelineStageFlags dst_stage_mask = memory_barrier.dst_stage_mask;
+
+	vkCmdPipelineBarrier(
+	    get_handle(),
+	    src_stage_mask,
+	    dst_stage_mask,
+	    0,
+	    0, nullptr,
+	    0, nullptr,
+	    1,
+	    &image_memory_barrier);
+}
+
 void CommandBuffer::buffer_memory_barrier(const core::Buffer &buffer, VkDeviceSize offset, VkDeviceSize size, const BufferMemoryBarrier &memory_barrier)
 {
 	VkBufferMemoryBarrier buffer_memory_barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};

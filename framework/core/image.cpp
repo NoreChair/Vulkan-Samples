@@ -86,7 +86,8 @@ Image::Image(Device &              device,
     sample_count{sample_count},
     usage{image_usage},
     array_layer_count{array_layers},
-    tiling{tiling}
+    tiling{tiling},
+    mip_count{mip_levels}
 {
 	assert(mip_levels > 0 && "Image should have at least one level");
 	assert(array_layers > 0 && "Image should have at least one layer");
@@ -256,6 +257,11 @@ VkImageSubresource Image::get_subresource() const
 uint32_t Image::get_array_layer_count() const
 {
 	return array_layer_count;
+}
+
+uint32_t Image::get_mip_count() const
+{
+    return mip_count;
 }
 
 std::unordered_set<ImageView *> &Image::get_views()

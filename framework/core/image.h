@@ -95,6 +95,8 @@ class Image
 
 	uint32_t get_array_layer_count() const;
 
+    uint32_t get_mip_count() const;
+
 	std::unordered_set<ImageView *> &get_views();
 
   private:
@@ -119,7 +121,7 @@ class Image
 	VkImageSubresource subresource{};
 
 	uint32_t array_layer_count{0};
-
+    uint32_t mip_count{0};
 	/// Image views referring to this image
 	std::unordered_set<ImageView *> views;
 

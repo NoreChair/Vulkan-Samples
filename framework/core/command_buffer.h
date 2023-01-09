@@ -231,6 +231,8 @@ class CommandBuffer
 
 	void image_memory_barrier(const core::ImageView &image_view, const ImageMemoryBarrier &memory_barrier);
 
+    void image_memory_barrier(const core::ImageView &image_view, const ImageMemoryBarrier &memory_barrier, const VkImageSubresourceRange &range);
+
 	void buffer_memory_barrier(const core::Buffer &buffer, VkDeviceSize offset, VkDeviceSize size, const BufferMemoryBarrier &memory_barrier);
 
 	const State get_state() const;
