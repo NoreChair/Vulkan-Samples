@@ -17,7 +17,7 @@ layout(set = 0, binding = 0) uniform GlobalUniform
 {
 	mat4  model;
 	mat4  view;
-	mat4  view_proj;
+	mat4  proj;
 	vec3  camera_position;
 };
 

@@ -12,8 +12,8 @@ layout(location = 2) out vec3 a_normal;
 layout(set = 0, binding = 0) uniform GlobalUniform
 {
 	mat4  model;
-    mat4  view;
-	mat4  view_proj;
+	mat4  view;
+	mat4  proj;
 	vec3  camera_position;
 };
 
@@ -24,5 +24,5 @@ void main(){
     a_uv     = texcoord_0;
     a_normal = (model * vec4(normal, 0.0)).rgb;
 
-    gl_Position = view_proj * world_pos;
+	gl_Position = proj * view * world_pos;
 }
