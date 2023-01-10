@@ -370,6 +370,9 @@ void forward_plus::prepare_pipelines()
 
     bloomPass = std::make_unique<bloom_pass>(device.get(), render_context.get());
     bloomPass->prepare();
+
+    ssrPass = std::make_unique<SSR>(device.get(), render_context.get());
+    ssrPass->prepare();
 }
 
 void forward_plus::prepare_shaders()
@@ -414,6 +417,10 @@ void forward_plus::prepare_shaders()
 		    {"velocity_gen", "forward_plus/velocity/velocity_gen.comp"},
             {"bloom_extract", "forward_plus/bloom/BloomExtractAndDownSample.comp"},
             {"bloom_blur", "forward_plus/bloom/BlurAndDownSample.comp"},
+            {"depth_down_sample", "forward_plus/DepthDownSample.comp"},
+            {"ray_allocate", "forward_plus/ssr/RayAllocation.comp"},
+            {"prepare_indirect","forward_plus/ssr/PrepareIndirectCommand.comp"},
+            {"ray_marching","forward_plus/ssr/RayMarching.comp"}
         };
 
 		std::unordered_map<std::string, ShaderSource> shaderSources;
@@ -493,6 +500,7 @@ void forward_plus::prepare_scene()
 	auto &camera_node = vkb::add_free_camera(*scene, "main_camera", get_render_context().get_surface_extent());
 
 	camera = &camera_node.get_component<vkb::sg::Camera>();
+    //camera->get_node()->get_transform().set_rotation(glm::quat_cast(glm::mat3(glm::vec3(0.0,0.0,1.0),glm::vec3(0.0,1.0,0.0), glm::vec3(-1.0,0.0,0.0))));
 	camera->set_far_plane(10000.0f);
 	camera->set_near_plane(0.01f);
 
@@ -535,7 +543,7 @@ void forward_plus::process_shadow(vkb::CommandBuffer &commandBuffer)
 	commandBuffer.image_memory_barrier(*shadowImageView, barrier);
 
     // linear depth
-	linearDepthPass->dispatch(commandBuffer, sceneDepthImageView.get(), linearDepthImageView[sourceTargetIndex].get(), camera);
+	linearDepthPass->dispatch(commandBuffer, camera, sourceTargetIndex);
 
 	// screen shadow
 	screenShadowPass->set_up(sceneDepthImageView.get(), shadowImageView.get(), screenShadowImageView.get());
@@ -545,15 +553,6 @@ void forward_plus::process_shadow(vkb::CommandBuffer &commandBuffer)
 
 void forward_plus::process_light_buffer(vkb::CommandBuffer &commandBuffer)
 {
-	vkb::ImageMemoryBarrier barrier{};
-	barrier.src_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-	barrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-	barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
-	barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.old_layout      = VK_IMAGE_LAYOUT_GENERAL;
-	barrier.new_layout      = VK_IMAGE_LAYOUT_GENERAL;
-	commandBuffer.image_memory_barrier(*linearDepthImageView[sourceTargetIndex], barrier);
-
 	BufferMemoryBarrier bufferBarrier{};
 	bufferBarrier.src_stage_mask  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 	bufferBarrier.dst_stage_mask  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -840,20 +839,33 @@ void forward_plus::render(float delta_time)
         bloomPass->dispatch(commandBuffer);
     }
 
-
-    if (enableTemporalAA) {
+    if(enableTemporalAA)
+    {
         temporalAAPass->gen_velocity_buffer(commandBuffer, camera, sourceTargetIndex);
-
         temporalAAPass->reslove(commandBuffer, sourceTargetIndex, destTargetIndex, sharpenValue);
 
         ImageMemoryBarrier barrier{};
         barrier.src_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-        barrier.dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         barrier.src_access_mask = VK_ACCESS_SHADER_WRITE_BIT;
         barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
         barrier.old_layout = VK_IMAGE_LAYOUT_GENERAL;
         barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         commandBuffer.image_memory_barrier(*hdrColorImageView, barrier);
+    }
+
+    {
+        ImageMemoryBarrier barrier{};
+        barrier.src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dst_stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        barrier.src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dst_access_mask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        commandBuffer.image_memory_barrier(*sceneNormalImageView, barrier);
+        commandBuffer.image_memory_barrier(*sceneParamsImageView, barrier);
+
+        ssrPass->dispatch(commandBuffer, camera, sourceTargetIndex, frame_count);
     }
 
 	process_HDR(commandBuffer);

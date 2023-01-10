@@ -1,0 +1,437 @@
+#version 450 core
+precision highp float;
+
+struct Ray
+{
+	uvec2 screenST;
+	vec4  rayStart;
+	vec4  rayDir;        // dir & pdf
+};
+
+layout(set = 0, binding = 0) uniform Uniforms
+{
+	mat4  viewMat;
+	mat4  projMat;
+	vec4  extent;
+	vec2  cameraClip;        // near, far
+	float maxReflectanceDistance;
+	float pixelStride;
+	float jitter;
+	float depthLevel;
+};
+
+layout(set = 0, std430, binding = 1) buffer RaysCounter
+{
+	// used as counter that how many ray be cast
+	uint rayCount;
+};
+
+layout(set = 0, std430, binding = 2) readonly buffer RaysBuffer
+{
+	Ray[] raysBuffer;
+};
+
+layout(set = 0, binding = 3) uniform sampler2D colorMap;
+layout(set = 0, binding = 4) uniform sampler2D linearDepth;
+layout(set = 0, binding = 5) uniform sampler2D normalMap;
+layout(set = 0, binding = 6) uniform writeonly image2D outputBuffer;
+layout(set = 0, binding = 7) uniform writeonly uimage2D rayIndexBuffer;
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// https://aras-p.info/blog/2009/08/04/compact-normal-storage-for-small-g-buffers/#comment-20223
+vec2 EncodeNormal(vec3 normal)
+{
+	float f = sqrt(8.0 * normal.z + 8.0);
+	return normal.xy / f + 0.5;
+}
+
+vec3 DecodeNormal(vec2 encode)
+{
+	vec4   nn = encode.xyxy * vec4(2.0, 2.0, 0.0, 0.0) + vec4(-1.0, -1.0, 1.0, -1.0);
+	float  l  = dot(nn.xyz, -nn.xyw);
+	nn.z     = l;
+	nn.xy *= sqrt(l);
+	return nn.xyz * 2.0 + vec3(0, 0, -1);
+}
+
+float DistanceSquared(vec2 p0, vec2 p1)
+{
+	vec2 l = p0 - p1;
+	return dot(l, l);
+}
+
+float DistanceSquared(vec3 p0, vec3 p1)
+{
+	vec3 l = p0 - p1;
+	return dot(l, l);
+}
+
+void Swap(in out float a, in out float b)
+{
+	float temp = a;
+	a          = b;
+	b          = temp;
+}
+
+bool TraceScreenSpaceRay(vec3      csOrigin,
+                         vec3      csDirection,
+                         mat4      projectToPixelMatrix,
+                         float     csZThickness,
+                         float     nearPlaneZ,
+                         float     farPlaneZ,
+                         float     stride,
+                         float     jitterFraction,
+                         float     maxSteps,
+                         float     maxRayTraceDistance,
+                         sampler2D linearZBuffer,
+                         out vec2  hitPixel,
+                         out vec3  csHitPoint)
+{
+	// Clip ray to a near plane in 3D (doesn't have to be *the* near plane, although that would be a good idea)
+	float rayLength  = ((csOrigin.z + csDirection.z * maxRayTraceDistance) < nearPlaneZ) ?
+	                       (csOrigin.z - nearPlaneZ) / csDirection.z :
+	                       maxRayTraceDistance;
+	vec3  csEndPoint = csDirection * rayLength + csOrigin;
+
+	// Project into screen space
+	vec4 H0 = projectToPixelMatrix * vec4(csOrigin, 1.0);
+	vec4 H1 = projectToPixelMatrix * vec4(csEndPoint, 1.0);
+
+	// There are a lot of divisions by w that can be turned into multiplications
+	// at some minor precision loss...and we need to interpolate these 1/w values
+	// anyway.
+	//
+	// Because the caller was required to clip to the near plane,
+	// this homogeneous division (projecting from 4D to 2D) is guaranteed
+	// to succeed.
+	float k0 = 1.0 / H0.w;
+	float k1 = 1.0 / H1.w;
+
+	// Switch the original points to values that interpolate linearly in 2D
+	vec3 Q0 = csOrigin * k0;
+	vec3 Q1 = csEndPoint * k1;
+
+	// Screen-space endpoints
+	vec2 P0 = H0.xy * k0;
+	vec2 P1 = H1.xy * k1;
+
+	// [Optional clipping to frustum sides here]
+
+	// Initialize to off screen
+	hitPixel = vec2(-1.0, -1.0);
+
+	// If the line is degenerate, make it cover at least one pixel
+	// to avoid handling zero-pixel extent as a special case later
+	P1 += vec2((DistanceSquared(P0, P1) < 0.0001) ? 0.01 : 0.0);
+
+	vec2 delta = P1 - P0;
+
+	// Permute so that the primary iteration is in x to reduce
+	// large branches later
+	bool permute = false;
+	if (abs(delta.x) < abs(delta.y))
+	{
+		// More-vertical line. Create a permutation that swaps x and y in the output
+		permute = true;
+
+		// Directly swizzle the inputs
+		delta = delta.yx;
+		P1    = P1.yx;
+		P0    = P0.yx;
+	}
+
+	// From now on, "x" is the primary iteration direction and "y" is the secondary one
+
+	float stepDirection = sign(delta.x);
+	float invdx         = stepDirection / delta.x;
+	vec2  dP            = vec2(stepDirection, invdx * delta.y);
+
+	// Track the derivatives of Q and k
+	vec3  dQ = (Q1 - Q0) * invdx;
+	float dk = (k1 - k0) * invdx;
+
+	// Scale derivatives by the desired pixel stride
+	dP *= stride;
+	dQ *= stride;
+	dk *= stride;
+
+	// Offset the starting values by the jitter fraction
+	P0 += dP * jitterFraction;
+	Q0 += dQ * jitterFraction;
+	k0 += dk * jitterFraction;
+
+	// Slide P from P0 to P1, (now-homogeneous) Q from Q0 to Q1, and k from k0 to k1
+	vec3  Q = Q0;
+	float k = k0;
+
+	// We track the ray depth at +/- 1/2 pixel to treat pixels as clip-space solid
+	// voxels. Because the depth at -1/2 for a given pixel will be the same as at
+	// +1/2 for the previous iteration, we actually only have to compute one value
+	// per iteration.
+	float prevZMaxEstimate = csOrigin.z;
+	float stepCount        = 0.0;
+	float rayZMax = prevZMaxEstimate, rayZMin = prevZMaxEstimate;
+	float sceneZMax = rayZMax + 1e4;
+
+	// P1.x is never modified after this point, so pre-scale it by
+	// the step direction for a signed comparison
+	float end = P1.x * stepDirection;
+
+	// We only advance the z field of Q in the inner loop, since
+	// Q.xy is never used until after the loop terminates.
+
+	for (vec2 P = P0;
+	     ((P.x * stepDirection) <= end) &&
+	     (stepCount < maxSteps) &&
+	     ((rayZMax < sceneZMax - csZThickness) ||
+	      (rayZMin > sceneZMax)) &&
+	     (sceneZMax != 0.0);
+	     P += dP, Q.z += dQ.z, k += dk, stepCount += 1.0)
+	{
+		hitPixel = permute ? P.yx : P;
+
+		// The depth range that the ray covers within this loop
+		// iteration.  Assume that the ray is moving in increasing z
+		// and swap if backwards.  Because one end of the interval is
+		// shared between adjacent iterations, we track the previous
+		// value and then swap as needed to ensure correct ordering
+		rayZMin = prevZMaxEstimate;
+
+		// Compute the value at 1/2 pixel into the future
+		rayZMax          = (dQ.z * 0.5 + Q.z) / (dk * 0.5 + k);
+		prevZMaxEstimate = rayZMax;
+		if (rayZMin > rayZMax)
+		{
+			Swap(rayZMin, rayZMax);
+		}
+
+		// Camera-space z of the background
+		sceneZMax = texelFetch(linearZBuffer, ivec2(hitPixel), int(depthLevel)).r * farPlaneZ;
+	}
+	// pixel on ray
+
+	Q.xy += dQ.xy * stepCount;
+	csHitPoint = Q * (1.0 / k);
+
+	// Matches the new loop condition:
+	return (rayZMax >= sceneZMax - csZThickness) && (rayZMin <= sceneZMax);
+}
+
+bool TraceHiZScreenSpaceRay(vec3      csOrigin,
+                            vec3      csDirection,
+                            mat4      projectToPixelMatrix,
+                            float     csZThickness,
+                            float     nearPlaneZ,
+                            float     farPlaneZ,
+                            float     jitterFraction,
+                            float     maxSteps,
+                            float     maxRayTraceDistance,
+                            int       mostDetailLevel,
+                            sampler2D linearZBuffer,
+                            out vec2  hitPixel,
+                            out vec3  csHitPoint)
+{
+	// Clip ray to a near plane in 3D (doesn't have to be *the* near plane, although that would be a good idea)
+	float rayLength  = ((csOrigin.z + csDirection.z * maxRayTraceDistance) < nearPlaneZ) ?
+	                       (csOrigin.z - nearPlaneZ) / csDirection.z :
+	                       maxRayTraceDistance;
+	vec3  csEndPoint = csDirection * rayLength + csOrigin;
+
+	vec4 H0 = projectToPixelMatrix * vec4(csOrigin, 1.0);
+	vec4 H1 = projectToPixelMatrix * vec4(csEndPoint, 1.0);
+
+	float k0 = 1.0 / H0.w;
+	float k1 = 1.0 / H1.w;
+
+	// Switch the original points to values that interpolate linearly in 2D
+	vec3 Q0 = csOrigin * k0;
+	vec3 Q1 = csEndPoint * k1;
+
+	// Screen-space endpoints
+	vec2 P0 = H0.xy * k0;
+	vec2 P1 = H1.xy * k1;
+
+	// [Optional clipping to frustum sides here]
+	hitPixel = vec2(-1.0, -1.0);
+
+	// If the line is degenerate, make it cover at least one pixel
+	// to avoid handling zero-pixel extent as a special case later
+	P1 += vec2((DistanceSquared(P0, P1) < 0.0001) ? 0.01 : 0.0);
+
+	vec2 delta = P1 - P0;
+
+	// Permute so that the primary iteration is in x to reduce
+	// large branches later
+	bool permute = false;
+	if (abs(delta.x) < abs(delta.y))
+	{
+		// More-vertical line. Create a permutation that swaps x and y in the output
+		permute = true;
+
+		// Directly swizzle the inputs
+		delta = delta.yx;
+		P1    = P1.yx;
+		P0    = P0.yx;
+	}
+
+	// From now on, "x" is the primary iteration direction and "y" is the secondary one
+
+	float stepDirection = sign(delta.x);
+	float invdx         = stepDirection / delta.x;
+	vec2  dP            = vec2(stepDirection, invdx * delta.y);
+
+	// Track the derivatives of Q and k
+	vec3  dQ = (Q1 - Q0) * invdx;
+	float dk = (k1 - k0) * invdx;
+
+	// Offset the starting values by the jitter fraction
+	P0 += dP * jitterFraction;
+	Q0 += dQ * jitterFraction;
+	k0 += dk * jitterFraction;
+
+	// Slide P from P0 to P1, (now-homogeneous) Q from Q0 to Q1, and k from k0 to k1
+	vec3  Q = Q0;
+	float k = k0;
+
+	float prevZMaxEstimate = csOrigin.z;
+	float stepCount        = 0.0;
+	float rayZMax = prevZMaxEstimate, rayZMin = prevZMaxEstimate;
+	float sceneZMax = rayZMax + 1e4;
+
+	// P1.x is never modified after this point, so pre-scale it by
+	// the step direction for a signed comparison
+	float end = P1.x * stepDirection;
+
+	int   curLevel         = mostDetailLevel;
+	float stride           = 1.0;
+	float invDivision      = 1.0;
+	bool  shouldCrossLevel = true;
+
+	for (vec2 P = P0;
+	     ((P.x * stepDirection) <= end) &&        // touch end point
+	     (stepCount < maxSteps) &&                // out of max step
+	     (sceneZMax != 0.0);                      // too close
+	     stepCount += 1.0)
+	{
+		hitPixel = permute ? P.yx : P;
+
+		rayZMin = prevZMaxEstimate;
+		// Compute the value at 1/2 pixel into the future
+		rayZMax = (dQ.z * 0.5 + Q.z) / (dk * 0.5 + k);
+		if (rayZMin > rayZMax)
+		{
+			Swap(rayZMin, rayZMax);
+		}
+
+		// Scale to location that Hi-Z size
+		vec2 queryST = floor(hitPixel * invDivision);
+		// Camera-space z of the background
+		sceneZMax = texelFetch(linearZBuffer, ivec2(queryST), curLevel).r * farPlaneZ;
+
+		bool intersect = ((rayZMax < sceneZMax - csZThickness) || (rayZMin > sceneZMax));        // hit intersection point
+
+		if (intersect)
+		{
+			// if ray intersected and curLevel get to the most detail level, we can assume it was hit
+			if (curLevel <= mostDetailLevel)
+			{
+				break;
+			}
+
+			stride      = max(0.5 * stride, 1.0);
+			invDivision = min(invDivision * 2.0, 1.0);
+			curLevel--;
+			shouldCrossLevel = false;
+		}
+		else
+		{
+			P += dP * stride;
+			Q += dQ * stride;
+			k += dk * stride;
+
+			if (shouldCrossLevel)
+			{
+				stride *= 2.0;
+				invDivision *= 0.5;
+				curLevel++;
+			}
+			shouldCrossLevel = true;
+			prevZMaxEstimate = rayZMax;
+		}
+	}
+
+	// pixel on ray
+	csHitPoint = Q * (1.0 / k);
+
+	// Matches the new loop condition:
+	return (rayZMax >= sceneZMax - csZThickness) && (rayZMin <= sceneZMax);
+}
+
+void main()
+{
+	uint dispatchIndex = gl_WorkGroupID.x * 64 + gl_LocalInvocationIndex;
+
+	if (dispatchIndex >= rayCount)
+	{
+		return;
+	}
+
+	Ray  ray         = raysBuffer[dispatchIndex];
+	vec3 csOrigin    = (viewMat * ray.rayStart).xyz;
+	vec3 csDirection = mat3(viewMat) * ray.rayDir.xyz;
+
+	vec2 uv = ray.screenST * extent.zw;
+	vec2 wh = extent.xy * 0.5;
+
+	mat4 clipToPixel = mat4(-wh.x, 0.0, 0.0, 0.0,
+	                        0.0, wh.y, 0.0, 0.0,
+	                        0.0, 0.0, 1.0, 0.0,
+	                        wh.x, wh.y, 0.0, 1.0);
+
+	mat4 projectToPixelMatrix = clipToPixel * projMat;
+
+	vec2 hitPixel = vec2(-1.0, -1.0);
+	vec3 hitPoint = vec3(0.0, 0.0, 0.0);
+
+	bool hit = TraceScreenSpaceRay(csOrigin, csDirection, projectToPixelMatrix, 0.1,
+	                               cameraClip.x, cameraClip.y, pixelStride, jitter,
+	                               32, 5000, linearDepth,
+	                               hitPixel, hitPoint);
+
+	vec2 hitUV = hitPixel * extent.zw;
+
+	bool invalid     = any(bvec4(lessThan(hitPixel.xy, vec2(0.0, 0.0)), greaterThan(hitPixel, extent.xy)));
+	bool maySelfRefl = all(lessThan(hitPixel - uv, extent.zw * 2.0));
+	bool background  = textureLod(linearDepth, hitUV, depthLevel).r == 1.0;
+
+	vec3 normal   = DecodeNormal(textureLod(normalMap, hitUV, 0).rg);
+	bool backFace = dot(ray.rayDir.xyz, normal) > 0.0;
+
+	vec3  traceRay  = hitPoint - csOrigin;
+	float rayLength = length(traceRay);
+
+	invalid = (invalid || maySelfRefl || background || backFace);
+	hit     = hit && (!invalid);
+
+	float confidence = hit ? 1.0 : 0.0;
+	confidence *= smoothstep(0.0, 0.015, rayLength);
+
+	vec2  vigUV = hitUV.xy * (1.0 - hitUV.yx);
+	float vig   = vigUV.x * vigUV.y * 15.0;
+	vig         = pow(vig, 0.1);
+
+	confidence *= confidence * vig;
+
+	// sample color map and sky color, blend in one and write out
+	vec3 radiance = vec3(0.0);
+	if (confidence > 0.0)
+	{
+		radiance = textureLod(colorMap, hitUV, 0).rgb;
+	}
+	vec3 skyRandiance = vec3(0.5, 0.5, 0.9) - max(normal.y, 0.0) * 0.3;
+
+	radiance = mix(skyRandiance, radiance, confidence);
+	imageStore(outputBuffer, ivec2(ray.screenST), vec4(radiance, rayLength));
+	imageStore(rayIndexBuffer, ivec2(ray.screenST), uvec4(dispatchIndex));
+}

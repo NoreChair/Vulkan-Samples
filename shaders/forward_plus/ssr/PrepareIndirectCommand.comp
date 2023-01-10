@@ -1,0 +1,31 @@
+#version 450 core
+precision highp float;
+
+struct DispatchIndirectCommand
+{
+	uint x;
+	uint y;
+	uint z;
+};
+
+layout(set = 0, std430, binding = 0) readonly buffer RaysCounter
+{
+	// used as counter that how many ray be cast
+	uint rayCount;
+};
+
+layout(set = 0, std430, binding = 1) writeonly buffer IndirectDispathBuffer
+{
+	DispatchIndirectCommand[1] dispatchCommand;
+};
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+	uint x = (rayCount + 63) / 64;
+
+	dispatchCommand[0].x = x;
+	dispatchCommand[0].y = 1;
+	dispatchCommand[0].z = 1;
+}

@@ -1,0 +1,210 @@
+#version 450 core
+precision highp float;
+
+#define INVALID_INDEX 0xffffffff
+
+struct Ray
+{
+	uvec2 screenST;
+	vec4  rayStart;
+	vec4  rayDir;        // dir & pdf
+};
+
+layout(set = 0, binding = 0) uniform Uniforms
+{
+	vec4  extent;
+	vec4  cameraPosition;
+	vec4  cameraProjectionCorner;
+	vec4  cameraProjectionHorizon;
+	vec4  cameraProjectionVertical;
+	vec2  cameraClip;        // near, far
+	vec2  jitter;
+	float ssrFadingDistance;        // must be less than far plane
+	float depthLevel;
+};
+
+layout(set = 0, std430, binding = 1) writeonly buffer RaysCounter
+{
+	// used as counter that how many ray be cast
+	uint rayCount;
+};
+
+layout(set = 0, std430, binding = 2) writeonly buffer RaysBuffer
+{
+	Ray[] raysBuffer;
+};
+
+layout(set = 0, binding = 3) uniform sampler2D linearDepth;
+layout(set = 0, binding = 4) uniform sampler2D GBuffer0;        // normal
+layout(set = 0, binding = 5) uniform sampler2D GBuffer1;        // pbr params
+
+layout(set = 0, r16ui, binding = 6) uniform writeonly uimage2D rayIndexBuffer;
+
+#ifdef BLUR_NOISE_OFFSET
+layout(set = 0, binding = 7) uniform sampler2D blurNoise;
+#endif
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// 16 x 16 pixels per-tile, max to 64 ray per-tile?
+// each ray must at the point where should have ssr
+
+shared uint tileRayCount;
+shared uint rayOffset;
+shared uvec2 raycastUV[256];
+
+#define M_PI 3.141592653
+
+// GGX Normal Distribution Function
+float D_GGX(float ndoth, float roughness)
+{
+	float alpha = roughness * roughness;
+	float f     = (ndoth * alpha - ndoth) * ndoth + 1.0;
+	return alpha / (f * f * M_PI);
+}
+
+float VisibleGGXPDF(vec3 V, vec3 H, float a)
+{
+	float NoV = V.z;
+	float NoH = H.z;
+	float VoH = dot(V, H);
+	float a2  = a * a;
+	float D   = D_GGX(NoH, a);
+	float pdf = 2.0 * VoH * D / (NoV + sqrt(NoV * (NoV - NoV * a2) + a2));
+	return pdf;
+}
+
+vec4 ImportanceSample_VisGGX(vec3 view, float alpha, vec2 randomNum)
+{
+	vec3 Vh = normalize(vec3(alpha * view.xy, view.z));
+
+	float lensq = Vh.x * Vh.x + Vh.y * Vh.y;
+	vec3  T1    = lensq > 0 ? vec3(-Vh.y, Vh.x, 0) * inversesqrt(lensq) : vec3(1, 0, 0);
+	vec3  T2    = cross(Vh, T1);
+
+	float r   = sqrt(randomNum.x);
+	float phi = 2.0 * M_PI * randomNum.y;
+	float t1  = r * cos(phi);
+	float t2  = r * sin(phi);
+	float s   = 0.5 * (1.0 + Vh.z);
+	t2        = (1.0 - s) * sqrt(1.0 - t1 * t1) + s * t2;
+
+	vec3 Nh = t1 * T1 + t2 * T2 + sqrt(max(0.0, 1.0 - t1 * t1 - t2 * t2)) * Vh;
+
+	vec3 Ne = normalize(vec3(alpha * Nh.xy, max(0.0, Nh.z)));
+	return vec4(Ne, VisibleGGXPDF(view, Ne, alpha));
+}
+
+float Pow2(float v)
+{
+	return v * v;
+}
+
+mat3 GetTangentBasis(vec3 tangentZ)
+{
+	const float sign = tangentZ.z >= 0 ? 1 : -1;
+	const float a    = -1.0 / (sign + tangentZ.z);
+	const float b    = tangentZ.x * tangentZ.y * a;
+
+	vec3 tangentX = {1 + sign * a * Pow2(tangentZ.x), sign * b, -sign * tangentZ.x};
+	vec3 tangentY = {b, sign + a * Pow2(tangentZ.y), -tangentZ.y};
+
+	return mat3(tangentX, tangentY, tangentZ);
+}
+
+void ImportanceSample(vec3 view, vec3 normal, float roughness, out vec4 ray)
+{
+	mat3 tbn = GetTangentBasis(normal);
+	view     = tbn * view;
+#ifdef BLUR_NOISE_OFFSET
+	vec2 random = textureLod(blurNoise, vec2(gl_GlobalInvocationID.xy) / 128.0, 0.0).xy;
+#else
+	vec2 random = jitter;
+#endif
+	float alpha = roughness * roughness;
+	vec4  r     = ImportanceSample_VisGGX(view, alpha, random);
+	vec3  h     = r.xyz;
+	vec3  dir   = 2.0 * dot(view, h) * h - view;
+
+	ray = vec4(dir, r.w);
+}
+
+void CastRay(vec3 point, vec3 view, vec3 normal, float roughness, uint offset, uint index)
+{
+	vec4 direction;
+	ImportanceSample(view, normal, roughness, direction);
+
+	Ray ray;
+	ray.screenST               = raycastUV[index];
+	ray.rayStart               = vec4(point, 1.0);
+	ray.rayDir                 = direction;
+	raysBuffer[offset + index] = ray;
+}
+
+vec3 DecodeNormal(vec2 enc)
+{
+	vec2  fenc = enc * 4.0 - 2.0;
+	float f    = dot(fenc, fenc);
+	float g    = sqrt(1.0 - f / 4.0);
+	vec3  n;
+	n.xy = fenc * g;
+	n.z  = 1.0 - f / 2.0;
+	return n;
+}
+
+void main()
+{
+	tileRayCount = 0;
+
+	vec2 uv         = vec2(gl_GlobalInvocationID.xy + 0.5) * extent.zw;
+	vec4  params1   = textureLod(GBuffer1, uv, 0);
+	float roughness = params1.x;
+	float depth     = textureLod(linearDepth, uv, depthLevel).r;
+
+	imageStore(rayIndexBuffer, ivec2(min(vec2(gl_GlobalInvocationID.xy), extent.xy)), uvec4(INVALID_INDEX));
+
+	memoryBarrierShared();
+	barrier();
+
+	// bool allocateRay = params1.y > 0.5 && depth * cameraClip.y < ssrFadingDistance && !any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(extent.xy)));
+	bool allocateRay = params1.y > 0.5 && !any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(extent.xy)));
+	if (allocateRay)
+	{
+		uint index       = atomicAdd(tileRayCount, 1u);
+		raycastUV[index] = gl_GlobalInvocationID.xy;
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	uint count = tileRayCount;
+
+	if (count == 0)
+	{
+		return;
+	}
+
+	if (gl_LocalInvocationIndex == 0)
+	{
+		rayOffset = atomicAdd(rayCount, count);
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	if (gl_LocalInvocationIndex < tileRayCount)
+	{
+		uvec2 st = raycastUV[gl_LocalInvocationIndex];
+		uv       = vec2(st.xy + 0.5) * extent.zw;
+
+		vec2 params0 = textureLod(GBuffer0, uv, 0).xy;
+		vec3 normal  = DecodeNormal(params0);
+
+		vec3 view      = cameraProjectionCorner.xyz + cameraProjectionHorizon.xyz * uv.x + cameraProjectionVertical.xyz * uv.y;
+		vec3 castPoint = view * depth + cameraPosition.xyz;
+
+		float viewL = length(view);
+		view *= 1.0 / viewL;
+		CastRay(castPoint, -view, normal, roughness, rayOffset, gl_LocalInvocationIndex);
+	}
+}

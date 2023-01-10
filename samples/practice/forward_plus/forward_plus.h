@@ -19,6 +19,7 @@
 #include "RenderPass/show_depth_pass.h"
 #include "RenderPass/TAA.h"
 #include "RenderPass/bloom_pass.h"
+#include "RenderPass/SSR.h"
 
 class vkb::sg::Node;
 class vkb::sg::SubMesh;
@@ -92,6 +93,7 @@ class forward_plus : public vkb::VulkanSample
 	std::unique_ptr<debug_draw_pass>    debugDrawPass{nullptr};
     std::unique_ptr<TAA>                temporalAAPass{nullptr};
     std::unique_ptr<bloom_pass>         bloomPass{nullptr};
+    std::unique_ptr<SSR>                ssrPass{nullptr};
 };
 
 std::unique_ptr<vkb::Application> create_forward_plus();
