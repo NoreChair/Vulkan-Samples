@@ -26,7 +26,6 @@ namespace GraphicContext
     DECLARE_IMAGE_ARRAY(temporalBlendImage, 2);     // TAA used
     DECLARE_IMAGE(velocityImage);
     DECLARE_IMAGE_ARRAY(bloomChainImage, 4);        // 2x/4x/8x/16x down sample
-    DECLARE_IMAGE(rayIndexImage);
     DECLARE_IMAGE(reflectImage);
 
     extern std::shared_ptr<vkb::core::Buffer> lightBuffer;

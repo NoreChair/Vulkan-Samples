@@ -34,7 +34,6 @@ namespace GraphicContext
     DEFINE_IMAGE_ARRAY(temporalBlendImage, 2);
     DEFINE_IMAGE(velocityImage);
     DEFINE_IMAGE_ARRAY(bloomChainImage, 4);        // 2x/4x/8x/16x down sample
-    DEFINE_IMAGE(rayIndexImage);
     DEFINE_IMAGE(reflectImage);
 
     std::shared_ptr<vkb::core::Buffer> lightBuffer{nullptr};
@@ -79,8 +78,6 @@ namespace GraphicContext
 	    sceneNormalImage = std::make_shared<Image>(device, extent, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         sceneParamsImage = std::make_shared<Image>(device, extent, VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 	    shadowImage      = std::make_shared<Image>(device, shadowExtent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-
-        rayIndexImage = std::make_shared<Image>(device, quarter, VK_FORMAT_R16_UINT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
         reflectImage = std::make_shared<Image>(device, quarter, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
 
 	    hdrColorImageView    = std::make_shared<ImageView>(*hdrColorImage, VK_IMAGE_VIEW_TYPE_2D);
@@ -88,7 +85,6 @@ namespace GraphicContext
 	    sceneNormalImageView = std::make_shared<ImageView>(*sceneNormalImage, VK_IMAGE_VIEW_TYPE_2D);
         sceneParamsImageView = std::make_shared<ImageView>(*sceneParamsImage, VK_IMAGE_VIEW_TYPE_2D);
 	    shadowImageView      = std::make_shared<ImageView>(*shadowImage, VK_IMAGE_VIEW_TYPE_2D);
-        rayIndexImageView    = std::make_shared<ImageView>(*rayIndexImage, VK_IMAGE_VIEW_TYPE_2D);
         reflectImageView     = std::make_shared<ImageView>(*reflectImage, VK_IMAGE_VIEW_TYPE_2D);
 
 	    for (int i = 0; i < 2; i++)
@@ -172,7 +168,6 @@ namespace GraphicContext
 	    RELEASE_IMAGE_ARRAY(temporalBlendImage, 2);
         RELEASE_IMAGE_ARRAY(bloomChainImage, 4);
 	    RELEASE_IMAGE(velocityImage);
-        RELEASE_IMAGE(rayIndexImage);
         RELEASE_IMAGE(reflectImage);
 
 	    lightBuffer.reset();

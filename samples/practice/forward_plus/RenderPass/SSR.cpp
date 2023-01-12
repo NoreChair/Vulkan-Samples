@@ -35,7 +35,7 @@ void SSR::prepare()
 
 void SSR::dispatch(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, int srcIndex, int frameIndex)
 {
-    auto extent = GraphicContext::rayIndexImage->get_extent();
+    auto extent = GraphicContext::reflectImage->get_extent();
     auto& cameraTransform = camera->get_node()->get_transform();
     auto& cameraPos = cameraTransform.get_translation();
     auto& cameraRot = glm::mat3_cast(cameraTransform.get_rotation());
@@ -82,7 +82,7 @@ void SSR::dispatch(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, i
             glm::vec4(up * yLength * 2.0f, 1.0f),
             glm::vec2(nearPlane, farPlane),
             points[frameIndex % jitterCount],
-            100.0f,
+            2000.0f,
             2.0f
         };
 
@@ -96,7 +96,6 @@ void SSR::dispatch(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, i
         commandBuffer.bind_image(*linearDepthImageView[srcIndex], *pointClampSampler, 0, 3, 0);
         commandBuffer.bind_image(*sceneNormalImageView, *linearClampSampler, 0, 4, 0);
         commandBuffer.bind_image(*sceneParamsImageView, *linearClampSampler, 0, 5, 0);
-        commandBuffer.bind_image(*rayIndexImageView, 0, 6, 0);
         commandBuffer.dispatch(groupX, groupY, 1);
 
         vkb::BufferMemoryBarrier barrier{};
@@ -138,9 +137,9 @@ void SSR::dispatch(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, i
             VulkanProjection(camera->get_projection()),
             screenParam,
             glm::vec2(nearPlane, farPlane),
-            100.0f,
+            2000.0f,
             1.0f,
-            ((double) rand() / (RAND_MAX)),
+            ((double) rand() / (RAND_MAX)) * 2.0 - 1.0,
             2.0f
         };
 
@@ -151,10 +150,9 @@ void SSR::dispatch(vkb::CommandBuffer &commandBuffer, vkb::sg::Camera* camera, i
         commandBuffer.bind_buffer(rayCounter.get_buffer(), rayCounter.get_offset(), rayCounter.get_size(), 0, 1, 0);
         commandBuffer.bind_buffer(*raysBuffer, 0, raysBuffer->get_size(), 0, 2, 0);
         commandBuffer.bind_image(*hdrColorImageView, *linearClampSampler, 0, 3, 0);
-        commandBuffer.bind_image(*linearDepthImageView[srcIndex], *linearClampSampler, 0, 4, 0);
-        commandBuffer.bind_image(*sceneNormalImageView, *linearClampSampler, 0, 5, 0);
+        commandBuffer.bind_image(*linearDepthImageView[srcIndex], *pointClampSampler, 0, 4, 0);
+        commandBuffer.bind_image(*sceneNormalImageView, *pointClampSampler, 0, 5, 0);
         commandBuffer.bind_image(*reflectImageView, 0, 6, 0);
-        commandBuffer.bind_image(*rayIndexImageView, 0, 7, 0);
         commandBuffer.dispatch_indirect(*indirectBuffer, 0);
     }
 

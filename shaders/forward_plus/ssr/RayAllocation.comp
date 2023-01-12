@@ -38,8 +38,6 @@ layout(set = 0, binding = 3) uniform sampler2D linearDepth;
 layout(set = 0, binding = 4) uniform sampler2D GBuffer0;        // normal
 layout(set = 0, binding = 5) uniform sampler2D GBuffer1;        // pbr params
 
-layout(set = 0, r16ui, binding = 6) uniform writeonly uimage2D rayIndexBuffer;
-
 #ifdef BLUR_NOISE_OFFSET
 layout(set = 0, binding = 7) uniform sampler2D blurNoise;
 #endif
@@ -132,8 +130,10 @@ void ImportanceSample(vec3 view, vec3 normal, float roughness, out vec4 ray)
 void CastRay(vec3 point, vec3 view, vec3 normal, float roughness, uint offset, uint index)
 {
 	vec4 direction;
-	ImportanceSample(view, normal, roughness, direction);
+	// ImportanceSample(view, normal, roughness, direction);
 
+	direction.xyz = 2.0 * dot(view,normal) * normal - view;
+	direction.w = 1.0;
 	Ray ray;
 	ray.screenST               = raycastUV[index];
 	ray.rayStart               = vec4(point, 1.0);
@@ -161,12 +161,10 @@ void main()
 	float roughness = params1.x;
 	float depth     = textureLod(linearDepth, uv, depthLevel).r;
 
-	imageStore(rayIndexBuffer, ivec2(min(vec2(gl_GlobalInvocationID.xy), extent.xy)), uvec4(INVALID_INDEX));
 
 	memoryBarrierShared();
 	barrier();
 
-	// bool allocateRay = params1.y > 0.5 && depth * cameraClip.y < ssrFadingDistance && !any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(extent.xy)));
 	bool allocateRay = params1.y > 0.5 && !any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(extent.xy)));
 	if (allocateRay)
 	{
